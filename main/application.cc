@@ -323,6 +323,7 @@ void Application::Run() {
                 if (idle_seconds_ >= kScreenSleepAfterSeconds) {
                     SleepScreen();
                 }
+#ifndef CONFIG_APOLLO_CODEX_VOICE
                 // Opening the channel on demand costs about three seconds, which
                 // is longer than a press-and-hold lasts: the turn would be over
                 // before the first sample was recorded. Reconnect while idle so
@@ -340,6 +341,7 @@ void Application::Run() {
                         }
                     });
                 }
+#endif
             } else {
                 // Anything but idle is the device working for the user.
                 NoteUserActivity();
