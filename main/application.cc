@@ -443,6 +443,10 @@ void Application::HandleNetworkDisconnectedEvent() {
         state == kDeviceStateSpeaking) {
         ESP_LOGI(TAG, "Closing audio channel due to network disconnection");
         protocol_->CloseAudioChannel();
+        // A dropped socket cannot finish the current listen or speech run. If
+        // the state is left untouched, the listening animation can remain on
+        // screen forever with no server left to end it.
+        SetDeviceState(kDeviceStateIdle);
     }
 
     // Update the status bar immediately to show the network state
@@ -1302,6 +1306,13 @@ void Application::HandleStopListeningEvent() {
     if (state == kDeviceStateAudioTesting) {
         audio_service_.EnableAudioTesting(false);
         SetDeviceState(kDeviceStateWifiConfiguring);
+        return;
+    } else if (state == kDeviceStateConnecting) {
+        // A short hold can end while its audio socket is still opening. Record
+        // that release by leaving connecting now; the queued continuation
+        // checks the state and will no longer open the mic after the finger is
+        // already gone.
+        SetDeviceState(kDeviceStateIdle);
         return;
     } else if (state == kDeviceStateListening) {
         // hold_end is what makes the server transcribe, so everything recorded

@@ -495,6 +495,13 @@ private:
                         auto_sleep_rearmed = true;
                         consecutive_read_failures = 0;
                     } else {
+                        // Never abandon a live push-to-talk hold. Without the
+                        // matching stop event, both the screen and server keep
+                        // listening after the touch task exits.
+                        if (is_hold_talking) {
+                            is_hold_talking = false;
+                            Application::GetInstance().StopListening();
+                        }
                         ESP_LOGE(TAG, "Touch controller unresponsive, stopping gesture task");
                         vTaskDelete(nullptr);
                         return;
