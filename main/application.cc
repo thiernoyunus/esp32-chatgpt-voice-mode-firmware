@@ -1372,7 +1372,12 @@ void Application::HandleWakeWordDetectedEvent() {
 
 void Application::BeginWakeWordInvoke(const std::string& wake_word) {
     // Must run in the main task with the device in idle state
+#ifndef CONFIG_APOLLO_PROTOCOL
     audio_service_.EncodeWakeWord();
+#else
+    // Apollo starts a fresh raw-PCM stream after the wake event. Encoding the
+    // cached wake phrase as Opus only delays that event, and Apollo discards it.
+#endif
 
     // Always pass through the connecting state, even if the audio channel is
     // already opened. ContinueWakeWordInvoke() rejects any other state, so
@@ -1415,7 +1420,7 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
     }
 
     ESP_LOGI(TAG, "Wake word detected: %s", wake_word.c_str());
-#if CONFIG_SEND_WAKE_WORD_DATA
+#if CONFIG_SEND_WAKE_WORD_DATA && !defined(CONFIG_APOLLO_PROTOCOL)
     // Encode and send the wake word data to the server
     while (auto packet = audio_service_.PopWakeWordPacket()) {
         protocol_->SendAudio(std::move(packet));
