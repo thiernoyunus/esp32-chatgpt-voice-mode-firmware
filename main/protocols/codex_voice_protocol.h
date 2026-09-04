@@ -40,8 +40,6 @@ private:
     std::atomic<bool> closing_{false};
     std::atomic<bool> speaking_{false};
     std::string request_id_;
-    std::string user_transcript_;
-    std::string assistant_transcript_;
     uint32_t uplink_pts_ms_ = 0;
 
     bool SendText(const std::string& text) override;

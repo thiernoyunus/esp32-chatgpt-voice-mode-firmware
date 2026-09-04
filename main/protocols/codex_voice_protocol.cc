@@ -119,8 +119,6 @@ bool CodexVoiceProtocol::OpenAudioChannel() {
     error_occurred_ = false;
     closing_ = false;
     speaking_ = false;
-    user_transcript_.clear();
-    assistant_transcript_.clear();
     uplink_pts_ms_ = 0;
     server_sample_rate_ = 16000;
     server_frame_duration_ = 20;
@@ -347,6 +345,27 @@ void CodexVoiceProtocol::HandleSignal(const char* data, size_t size) {
                 Fail("ChatGPT returned an unusable WebRTC answer.");
             }
         }
+    } else if (strcmp(type->valuestring, "realtime_transcript_delta") == 0) {
+        const cJSON* role = cJSON_GetObjectItemCaseSensitive(root, "role");
+        const cJSON* delta = cJSON_GetObjectItemCaseSensitive(root, "delta");
+        if (cJSON_IsString(role) && cJSON_IsString(delta) && delta->valuestring[0] != '\0' &&
+            strcmp(role->valuestring, "assistant") == 0) {
+            StartSpeaking();
+        }
+    } else if (strcmp(type->valuestring, "realtime_transcript_done") == 0) {
+        const cJSON* role = cJSON_GetObjectItemCaseSensitive(root, "role");
+        const cJSON* text = cJSON_GetObjectItemCaseSensitive(root, "text");
+        if (cJSON_IsString(role) && cJSON_IsString(text) &&
+            (strcmp(role->valuestring, "user") == 0 ||
+             strcmp(role->valuestring, "assistant") == 0)) {
+            if (text->valuestring[0] != '\0') {
+                EmitTranscript(role->valuestring, text->valuestring);
+            }
+            ESP_LOGI(TAG, "%s transcript complete", role->valuestring);
+            if (strcmp(role->valuestring, "assistant") == 0) {
+                StopSpeaking();
+            }
+        }
     } else if (strcmp(type->valuestring, "realtime_error") == 0) {
         const cJSON* message = cJSON_GetObjectItemCaseSensitive(root, "message");
         Fail(cJSON_IsString(message) ? message->valuestring : "ChatGPT Voice failed.");
@@ -368,64 +387,6 @@ void CodexVoiceProtocol::HandleRealtimeEvent(const uint8_t* data, size_t size) {
     if (strcmp(event_type, "error") == 0 ||
         strcmp(event_type, "invalid_request_error") == 0) {
         Fail(ReadErrorMessage(root));
-    } else if (strcmp(event_type, "input_transcript.added") == 0 ||
-               strcmp(event_type, "output_transcript.added") == 0) {
-        const cJSON* item = cJSON_GetObjectItemCaseSensitive(root, "item");
-        const cJSON* text = cJSON_IsObject(item)
-                                ? cJSON_GetObjectItemCaseSensitive(item, "text")
-                                : nullptr;
-        if (cJSON_IsString(text)) {
-            auto& transcript = event_type[0] == 'i' ? user_transcript_
-                                                    : assistant_transcript_;
-            transcript += text->valuestring;
-        }
-    } else if (strcmp(event_type, "turn.done") == 0) {
-        const cJSON* turn = cJSON_GetObjectItemCaseSensitive(root, "turn");
-        const cJSON* role = cJSON_IsObject(turn)
-                                ? cJSON_GetObjectItemCaseSensitive(turn, "role")
-                                : nullptr;
-        const cJSON* transcript = cJSON_IsObject(turn)
-                                      ? cJSON_GetObjectItemCaseSensitive(turn, "transcript")
-                                      : nullptr;
-        if (cJSON_IsString(role)) {
-            const bool is_user = strcmp(role->valuestring, "user") == 0;
-            const bool is_assistant = strcmp(role->valuestring, "assistant") == 0;
-            if (is_user || is_assistant) {
-                auto& accumulated = is_user ? user_transcript_ : assistant_transcript_;
-                const char* text = cJSON_IsString(transcript) ? transcript->valuestring
-                                                              : accumulated.c_str();
-                if (text[0] != '\0') {
-                    EmitTranscript(role->valuestring, text);
-                }
-                accumulated.clear();
-                if (is_assistant) {
-                    StopSpeaking();
-                }
-            }
-        }
-    } else if (strcmp(event_type, "response.created") == 0) {
-        assistant_transcript_.clear();
-        StartSpeaking();
-    } else if (strstr(event_type, "audio_transcript.delta") != nullptr) {
-        const cJSON* delta = cJSON_GetObjectItemCaseSensitive(root, "delta");
-        if (cJSON_IsString(delta)) {
-            assistant_transcript_ += delta->valuestring;
-        }
-    } else if (strstr(event_type, "audio_transcript.done") != nullptr) {
-        const cJSON* transcript = cJSON_GetObjectItemCaseSensitive(root, "transcript");
-        const char* text = cJSON_IsString(transcript) ? transcript->valuestring
-                                                      : assistant_transcript_.c_str();
-        if (text[0] != '\0') {
-            EmitTranscript("assistant", text);
-        }
-    } else if (strcmp(event_type, "conversation.item.input_audio_transcription.completed") ==
-               0) {
-        const cJSON* transcript = cJSON_GetObjectItemCaseSensitive(root, "transcript");
-        if (cJSON_IsString(transcript) && transcript->valuestring[0] != '\0') {
-            EmitTranscript("user", transcript->valuestring);
-        }
-    } else if (strcmp(event_type, "response.done") == 0) {
-        StopSpeaking();
     }
     cJSON_Delete(root);
 }
@@ -527,7 +488,6 @@ int CodexVoiceProtocol::OnPeerAudio(esp_peer_audio_frame_t* frame, void* context
         protocol->on_incoming_audio_ == nullptr) {
         return 0;
     }
-    protocol->StartSpeaking();
     auto* packet = new AudioStreamPacket();
     packet->sample_rate = protocol->server_sample_rate_;
     packet->frame_duration = OpusPacketDurationMs(frame->data, frame->size);
