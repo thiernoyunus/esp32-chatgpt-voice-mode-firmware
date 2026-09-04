@@ -220,6 +220,11 @@ if(CONFIG_IDF_TARGET_ESP32S3)
 endif()
 
 set(MAIN_PRIV_REQUIRES_EXTRA "")
+if(CONFIG_APOLLO_CODEX_VOICE)
+    list(REMOVE_ITEM SOURCES "protocols/apollo_protocol.cc")
+    list(APPEND SOURCES "protocols/codex_voice_protocol.cc")
+    list(APPEND MAIN_PRIV_REQUIRES_EXTRA espressif__esp_peer)
+endif()
 if(BOARD_TYPE STREQUAL "m5stack-stick-s3")
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA
         m5stack__m5pm1

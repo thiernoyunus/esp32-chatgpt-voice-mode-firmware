@@ -40,6 +40,15 @@ config APOLLO_DEVICE_ID
         Agent instance name, which is also the conversation the device joins.
         Falls back to the MAC address when left empty.
 
+config APOLLO_CODEX_VOICE
+    bool "Use ChatGPT Codex Voice over WebRTC"
+    depends on APOLLO_PROTOCOL && IDF_TARGET_ESP32S3
+    default n
+    help
+        Replaces Apollo's Soniox audio path with a direct WebRTC voice call
+        created through the logged-in Codex bridge. Classic Apollo remains the
+        default when this option is off.
+
 config APOLLO_NTP_SERVER
     string "NTP server"
     depends on APOLLO_PROTOCOL
@@ -58,6 +67,7 @@ config APOLLO_TIMEZONE
 
 config APOLLO_RAW_PCM_UPLINK
     bool "Send microphone audio as raw PCM instead of Opus"
+    depends on !APOLLO_CODEX_VOICE
     default y if APOLLO_PROTOCOL
     default n
     help

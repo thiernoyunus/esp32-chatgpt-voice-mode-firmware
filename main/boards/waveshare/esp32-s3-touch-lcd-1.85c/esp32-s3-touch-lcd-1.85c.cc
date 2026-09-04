@@ -548,6 +548,7 @@ private:
                 // Hold the screen to talk: start recording once the press is too
                 // long to be a tap, and keep going until the finger lifts. The
                 // finger has to stay put, or this would hijack a slow swipe.
+#ifndef CONFIG_APOLLO_CODEX_VOICE
                 if (!is_hold_talking && now_ms - press_started_ms >= kHoldToTalkMs &&
                     abs(last_x - start_x) < kTapMaxTravelPx &&
                     abs(last_y - start_y) < kTapMaxTravelPx) {
@@ -559,7 +560,9 @@ private:
                     app.NoteUserActivity();
                     app.StartListening();
                 }
+#endif
             } else if (was_pressed) {
+#ifndef CONFIG_APOLLO_CODEX_VOICE
                 if (is_hold_talking) {
                     // Lifting the finger is what sends the turn.
                     is_hold_talking = false;
@@ -568,6 +571,7 @@ private:
                     vTaskDelay(pdMS_TO_TICKS(kTouchPollMs));
                     continue;
                 }
+#endif
 
                 int dx = last_x - start_x;
                 int dy = last_y - start_y;
@@ -606,7 +610,7 @@ private:
 #endif
 
     void InitializeButtons() {
-#ifdef CONFIG_APOLLO_PROTOCOL
+#if defined(CONFIG_APOLLO_PROTOCOL) && !defined(CONFIG_APOLLO_CODEX_VOICE)
         // Apollo is push-to-talk: its protocol is built around hold_start and
         // hold_end, and holding the button is also the only way to bound an
         // utterance while the wake word model (which supplies the VAD that
@@ -637,6 +641,9 @@ private:
             }
             app.ToggleChatState();
         });
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+        boot_button_.OnMultipleClick([this]() { EnterWifiConfigMode(); }, 3);
+#endif
 #endif
     }
 

@@ -10,7 +10,11 @@
 #include "settings.h"
 #include "system_info.h"
 #include "text_glyph_payload.h"
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+#include "codex_voice_protocol.h"
+#else
 #include "apollo_protocol.h"
+#endif
 #if CONFIG_USE_EMOTE_MESSAGE_STYLE
 #include "display/emote_display.h"
 #endif
@@ -97,6 +101,9 @@ void Application::Initialize() {
     // Setup the audio service
     auto codec = board.GetAudioCodec();
     audio_service_.Initialize(codec);
+#if CONFIG_USE_DEVICE_AEC
+    audio_service_.EnableDeviceAec(true);
+#endif
     audio_service_.Start();
 
     AudioServiceCallbacks callbacks;
@@ -720,7 +727,11 @@ void Application::InitializeProtocol() {
     // Apollo is configured from NVS, not from an OTA config response. The
     // upstream MQTT/websocket protocols are gone from this fork: Apollo's
     // dialect is the only one the device speaks.
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+    protocol_ = std::make_unique<CodexVoiceProtocol>();
+#else
     protocol_ = std::make_unique<ApolloProtocol>();
+#endif
 
     protocol_->OnConnected([this]() { DismissAlert(); });
 
