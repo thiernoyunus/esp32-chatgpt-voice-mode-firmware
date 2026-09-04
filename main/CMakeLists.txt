@@ -154,6 +154,8 @@ endif ()
 # Select language directory according to Kconfig
 if(CONFIG_LANGUAGE_ES_ES)
     set(LANG_DIR "es-ES")
+elseif(CONFIG_LANGUAGE_EN_US)
+    set(LANG_DIR "en-US")
 else()
     set(LANG_DIR "en-US")
 endif()

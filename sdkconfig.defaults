@@ -78,5 +78,5 @@ CONFIG_LV_USE_WIN=n
 CONFIG_LV_BUILD_EXAMPLES=n
 CONFIG_LV_BUILD_DEMOS=n
 
-# Apollo: Spanish UI strings and prompts
-CONFIG_LANGUAGE_ES_ES=y
+# Apollo: English UI strings and prompts
+CONFIG_LANGUAGE_EN_US=y
