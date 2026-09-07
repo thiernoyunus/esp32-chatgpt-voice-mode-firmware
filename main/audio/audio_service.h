@@ -36,9 +36,24 @@
  * 
  */
 
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+#define OPUS_FRAME_DURATION_MS 20
+#else
 #define OPUS_FRAME_DURATION_MS 60
-#define MAX_ENCODE_TASKS_IN_QUEUE 2
-#define MAX_PLAYBACK_TASKS_IN_QUEUE 2
+#endif
+/* Captured microphone frames waiting to be encoded. At 2 frames this is only
+ * 40 ms of headroom, but the speaker write alone blocks for ~19 ms of every
+ * 20 ms frame and can reach 34 ms, so one slow write plus a decode overruns it
+ * and the oldest frame - a slice of the user's speech - is discarded. 8 frames
+ * (160 ms) rides out those stalls and bounds latency, not memory.
+ * ponytail: fixed depth, matched to the playback buffer. */
+#define MAX_ENCODE_TASKS_IN_QUEUE 8
+/* Buffer between the decoder and the speaker. At 2 frames (40 ms) the output
+ * task drains faster than the codec task can refill, so playback runs below
+ * realtime, the decode queue backs up, and live speech is discarded. 8 frames
+ * (160 ms) absorbs scheduler jitter without adding audible delay.
+ * ponytail: fixed depth; make it adaptive only if jitter exceeds 160 ms. */
+#define MAX_PLAYBACK_TASKS_IN_QUEUE 8
 #define MAX_DECODE_PACKETS_IN_QUEUE (2400 / OPUS_FRAME_DURATION_MS)
 #define MAX_SEND_PACKETS_IN_QUEUE (2400 / OPUS_FRAME_DURATION_MS)
 #define AUDIO_TESTING_MAX_DURATION_MS 10000
@@ -128,6 +143,15 @@ public:
 
     void EnableWakeWordDetection(bool enable);
     void EnableVoiceProcessing(bool enable);
+    void SetMicrophoneMuted(bool muted);
+    bool IsMicrophoneMuted() const { return microphone_muted_.load(); }
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+    int TakeVoiceLevel() {
+        const int input = input_voice_level_.exchange(0);
+        const int output = output_voice_level_.exchange(0);
+        return input > output ? input : output;
+    }
+#endif
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
 
@@ -183,6 +207,13 @@ private:
     bool output_in_flight_ = false;
     bool playback_drained_notified_ = true;
     uint32_t playback_generation_ = 0;
+    std::atomic<bool> microphone_muted_{false};
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+    std::atomic<int> input_voice_level_{0}, output_voice_level_{0};
+    // Last time real speech (not silence padding) went to the speaker.
+    std::atomic<int64_t> last_loud_output_us_{0};
+#endif
+    uint32_t microphone_generation_ = 0;
     // For server AEC
     std::deque<uint32_t> timestamp_queue_;
 

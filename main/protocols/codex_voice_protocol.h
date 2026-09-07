@@ -11,11 +11,20 @@
 #include <cstdint>
 #include <memory>
 #include <string>
+#include <vector>
 
 class WebSocket;
 
 class CodexVoiceProtocol : public Protocol {
 public:
+    struct ModelChoice { std::string id; std::string name; };
+    struct ChatChoice { std::string id; std::string name; };
+    const std::vector<ModelChoice>& GetModels() const { return models_; }
+    bool SelectModel(size_t index);
+    // Recent Codex chats offered by the bridge on the last answer.
+    const std::vector<ChatChoice>& GetChats() const { return chats_; }
+    // Pick the chat the next call resumes. index 0 means "New chat".
+    bool SelectChat(size_t index);
     CodexVoiceProtocol();
     ~CodexVoiceProtocol() override;
 
@@ -32,6 +41,8 @@ public:
     void SendWakeWordDetected(const std::string& wake_word) override;
 
 private:
+    std::vector<ModelChoice> models_{{"", "Default"}};
+    std::vector<ChatChoice> chats_;
     std::unique_ptr<WebSocket> websocket_;
     esp_peer_handle_t peer_ = nullptr;
     EventGroupHandle_t peer_events_ = nullptr;
@@ -52,6 +63,14 @@ private:
     void EmitTranscript(const char* role, const char* text);
     void Fail(const std::string& message);
     void RunPeerLoop();
+    // Recovers a reply that is being transcribed but never reaches the speaker.
+    void CheckInboundAudioStall();
+
+    // Millisecond of the last inbound audio frame, and of the last assistant
+    // reply that was expected to be spoken. Both are written from peer/data
+    // callbacks and read by the peer loop.
+    std::atomic<uint32_t> last_audio_frame_ms_{0};
+    std::atomic<uint32_t> speech_expected_since_ms_{0};
 
     static int OnPeerState(esp_peer_state_t state, void* context);
     static int OnPeerMessage(esp_peer_msg_t* message, void* context);

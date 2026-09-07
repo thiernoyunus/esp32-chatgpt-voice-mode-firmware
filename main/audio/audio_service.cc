@@ -1,6 +1,29 @@
 #include "audio_service.h"
 #include <esp_log.h>
 #include <cstring>
+#include <algorithm>
+
+namespace {
+// ponytail: fixed microphone calibration; use adaptive gain if louder voices clip.
+constexpr int kCodexVoiceInputGain = 16;
+constexpr int16_t CodexVoiceInputSample(int16_t sample) {
+    return static_cast<int16_t>(std::clamp(static_cast<int>(sample) * kCodexVoiceInputGain,
+                                         -32768, 32767));
+}
+static_assert(CodexVoiceInputSample(0) == 0);
+static_assert(CodexVoiceInputSample(100) == 1600);
+static_assert(CodexVoiceInputSample(-100) == -1600);
+static_assert(CodexVoiceInputSample(32767) == 32767);
+static_assert(CodexVoiceInputSample(-32768) == -32768);
+// ponytail: a small loudness meter, not a speech detector; tune for this microphone.
+int CodexVoiceLevel(const std::vector<int16_t>& pcm) {
+    if (pcm.empty()) return 0;
+    int64_t magnitude = 0;
+    for (int sample : pcm) magnitude += sample < 0 ? -sample : sample;
+    return std::clamp(static_cast<int>(magnitude / static_cast<int64_t>(pcm.size()) - 128) / 24,
+                      0, 100);
+}
+}  // namespace
 
 #define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)        \
     (esp_ae_rate_cvt_cfg_t)                                  \
@@ -91,6 +114,35 @@ void AudioService::Initialize(AudioCodec* codec) {
     audio_engine_ = std::make_unique<LiteAudioEngine>();
 #endif
     audio_engine_->OnOutput([this](std::vector<int16_t>&& data) {
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+        for (auto& sample : data) {
+            sample = CodexVoiceInputSample(sample);
+        }
+        input_voice_level_.store(microphone_muted_ ? 0 : CodexVoiceLevel(data));
+        /* Barge-in measurement: compare what the microphone delivers while the
+         * speaker is idle against what it delivers while Apollo is talking. If
+         * echo cancellation is scrubbing the user's interruption, mic_peak
+         * collapses in the speaking case even when the user is shouting.
+         * Logged at most once a second; remove once barge-in is settled. */
+        {
+            int mic_peak = 0;
+            for (int sample : data) mic_peak = std::max(mic_peak, sample < 0 ? -sample : sample);
+            static int64_t last_bargein_log = 0;
+            static int mic_peak_window = 0;
+            mic_peak_window = std::max(mic_peak_window, mic_peak);
+            const int64_t now = esp_timer_get_time();
+            if (now - last_bargein_log >= 1000000) {
+                last_bargein_log = now;
+                /* "Speaking" means real speech left the speaker in the last
+                 * second, not merely that a write was in flight this instant. */
+                const bool speaker_active =
+                    now - last_loud_output_us_.load() < 1000000;
+                ESP_LOGI(TAG, "[DEBUG-bargein] mic_peak=%d speaker_active=%d",
+                         mic_peak_window, speaker_active ? 1 : 0);
+                mic_peak_window = 0;
+            }
+        }
+#endif
         PushTaskToEncodeQueue(kAudioTaskTypeEncodeToSendQueue, std::move(data));
     });
     audio_engine_->OnVadStateChange([this](bool speaking) {
@@ -161,7 +213,7 @@ void AudioService::Start() {
         AudioService* audio_service = (AudioService*)arg;
         audio_service->OpusCodecTask();
         vTaskDelete(NULL);
-    }, "opus_codec", 2048 * 12, this, 2, &opus_codec_task_handle_);
+    }, "opus_codec", 2048 * 12, this, 6, &opus_codec_task_handle_);
 }
 
 void AudioService::Stop() {
@@ -312,6 +364,11 @@ void AudioService::AudioInputTask() {
 }
 
 void AudioService::AudioOutputTask() {
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+    uint32_t output_frames = 0;
+    int output_peak = 0;
+    int64_t last_output_log = 0;
+#endif
     while (true) {
         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
         audio_queue_cv_.wait(lock, [this]() {
@@ -333,7 +390,30 @@ void AudioService::AudioOutputTask() {
             codec_->EnableOutput(true);
         }
 
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+        output_voice_level_.store(CodexVoiceLevel(task->pcm));
+#endif
         codec_->OutputData(task->pcm);
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+        for (int sample : task->pcm) output_peak = std::max(output_peak, sample < 0 ? -sample : sample);
+        ++output_frames;
+        {
+            int frame_peak = 0;
+            for (int sample : task->pcm) {
+                frame_peak = std::max(frame_peak, sample < 0 ? -sample : sample);
+            }
+            // 500 separates real speech from the silence-padding frames that
+            // stream continuously between sentences.
+            if (frame_peak > 500) last_loud_output_us_.store(esp_timer_get_time());
+        }
+        if (esp_timer_get_time() - last_output_log >= 1000000) {
+            last_output_log = esp_timer_get_time();
+            ESP_LOGI(TAG, "[DEBUG-audio] played=%lu peak=%d volume=%d enabled=%d mic_muted=%d",
+                     (unsigned long)output_frames, output_peak, codec_->output_volume(),
+                     codec_->output_enabled(), IsMicrophoneMuted());
+            output_peak = 0;
+        }
+#endif
 
         if (task->tts_source_milliseconds > 0) {
             played_tts_milliseconds_ += task->tts_source_milliseconds;
@@ -349,6 +429,9 @@ void AudioService::AudioOutputTask() {
         /* Record the timestamp for server AEC */
         if (task->timestamp > 0) {
             timestamp_queue_.push_back(task->timestamp);
+            if (timestamp_queue_.size() > MAX_TIMESTAMPS_IN_QUEUE) {
+                timestamp_queue_.pop_front();
+            }
         }
 #endif
         output_in_flight_ = false;
@@ -388,6 +471,9 @@ void AudioService::OpusCodecTask() {
             auto task = std::make_unique<AudioTask>();
             task->type = kAudioTaskTypeDecodeToPlaybackQueue;
             task->timestamp = packet->timestamp;
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+            const int64_t decode_started = esp_timer_get_time();
+#endif
 
             SetDecodeSampleRate(packet->sample_rate, packet->frame_duration);
             bool decoded = false;
@@ -445,6 +531,15 @@ void AudioService::OpusCodecTask() {
             }
 
             lock.lock();
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+            static uint32_t decoded_frames = 0;
+            if (++decoded_frames == 1 || decoded_frames % 250 == 0) {
+                ESP_LOGI(TAG, "[DEBUG-audio] decode_us=%lld duration=%d samples=%u backlog=%u encode_backlog=%u",
+                         (long long)(esp_timer_get_time() - decode_started), packet->frame_duration,
+                         (unsigned)task->pcm.size(), (unsigned)audio_decode_queue_.size(),
+                         (unsigned)audio_encode_queue_.size());
+            }
+#endif
             if (decoded && generation == playback_generation_ && !service_stopped_.load()) {
                 audio_playback_queue_.push_back(std::move(task));
             }
@@ -462,6 +557,7 @@ void AudioService::OpusCodecTask() {
         if (!audio_encode_queue_.empty()) {
             auto task = std::move(audio_encode_queue_.front());
             audio_encode_queue_.pop_front();
+            const auto microphone_generation = microphone_generation_;
             audio_queue_cv_.notify_all();
             lock.unlock();
 
@@ -506,7 +602,12 @@ void AudioService::OpusCodecTask() {
             if (payload_ready) {
                 if (task->type == kAudioTaskTypeEncodeToSendQueue) {
                     {
-                        std::lock_guard<std::mutex> lock2(audio_queue_mutex_);
+                        std::unique_lock<std::mutex> lock2(audio_queue_mutex_);
+                        if (microphone_muted_ || microphone_generation != microphone_generation_) {
+                            lock2.unlock();
+                            lock.lock();
+                            continue;
+                        }
                         /* Never let a full send queue stall encoding: stale realtime
                          * audio is useless to the server, so drop the oldest packet. */
                         if (audio_send_queue_.size() >= MAX_SEND_PACKETS_IN_QUEUE) {
@@ -576,6 +677,10 @@ void AudioService::PushTaskToEncodeQueue(AudioTaskType type, std::vector<int16_t
         /* Push the task to the encode queue */
         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
 
+        if (type == kAudioTaskTypeEncodeToSendQueue && microphone_muted_) {
+            return;
+        }
+
         /* If the task is to send queue, we need to set the timestamp */
         if (type == kAudioTaskTypeEncodeToSendQueue && !timestamp_queue_.empty()) {
             if (timestamp_queue_.size() <= MAX_TIMESTAMPS_IN_QUEUE) {
@@ -642,6 +747,24 @@ std::unique_ptr<AudioStreamPacket> AudioService::PopPacketFromSendQueue() {
     return packet;
 }
 
+void AudioService::SetMicrophoneMuted(bool muted) {
+    std::lock_guard<std::mutex> lock(audio_queue_mutex_);
+    if (microphone_muted_ == muted) {
+        return;
+    }
+    microphone_muted_ = muted;
+    ++microphone_generation_;
+    audio_send_queue_.clear();
+    for (auto task = audio_encode_queue_.begin(); task != audio_encode_queue_.end();) {
+        if ((*task)->type == kAudioTaskTypeEncodeToSendQueue) {
+            task = audio_encode_queue_.erase(task);
+        } else {
+            ++task;
+        }
+    }
+    audio_queue_cv_.notify_all();
+}
+
 void AudioService::EncodeWakeWord() {
     if (audio_engine_) {
         audio_engine_->EncodeWakeWordData();
@@ -654,6 +777,9 @@ const std::string& AudioService::GetLastWakeWord() const {
 }
 
 std::unique_ptr<AudioStreamPacket> AudioService::PopWakeWordPacket() {
+    if (microphone_muted_) {
+        return nullptr;
+    }
     auto packet = std::make_unique<AudioStreamPacket>();
     if (audio_engine_ && audio_engine_->GetWakeWordOpus(packet->payload)) {
         return packet;
