@@ -12,6 +12,8 @@
 #include "text_glyph_payload.h"
 #ifdef CONFIG_APOLLO_CODEX_VOICE
 #include "codex_voice_protocol.h"
+#include "display/voice_geometry.h"
+#include "display/lcd_display.h"
 #else
 #include "apollo_protocol.h"
 #endif
@@ -223,7 +225,17 @@ void Application::Run() {
         auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
 
         if (bits & MAIN_EVENT_ERROR) {
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+            if (protocol_) {
+                protocol_->CloseAudioChannel();
+            }
+#endif
             SetDeviceState(kDeviceStateIdle);
+            // Going idle queues a state change whose handler blanks the screen
+            // back to STANDBY. Drain it here, before the alert is drawn, or the
+            // next loop pass erases the very message this event exists to show.
+            xEventGroupClearBits(event_group_, MAIN_EVENT_STATE_CHANGED);
+            HandleStateChangedEvent();
             Alert(Lang::Strings::ERROR, last_error_message_.c_str(), "cancel",
                   Lang::Sounds::OGG_EXCLAMATION);
         }
@@ -316,11 +328,18 @@ void Application::Run() {
             clock_ticks_++;
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+            if (clock_ticks_ % 3 == 0) RefreshWatchInfo();
+#endif
 
 #ifdef CONFIG_APOLLO_PROTOCOL
             if (GetDeviceState() == kDeviceStateIdle) {
                 idle_seconds_++;
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+                if (screen_sleep_seconds_ > 0 && idle_seconds_ >= screen_sleep_seconds_) {
+#else
                 if (idle_seconds_ >= kScreenSleepAfterSeconds) {
+#endif
                     SleepScreen();
                 }
 #ifndef CONFIG_APOLLO_CODEX_VOICE
@@ -743,7 +762,13 @@ void Application::InitializeProtocol() {
     });
 
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+        // Live audio and captions arrive independently; captions must not gate playback.
+        if (protocol_->IsAudioChannelOpened() &&
+            (GetDeviceState() == kDeviceStateListening || GetDeviceState() == kDeviceStateSpeaking)) {
+#else
         if (GetDeviceState() == kDeviceStateSpeaking) {
+#endif
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
         }
     });
@@ -758,12 +783,20 @@ void Application::InitializeProtocol() {
         }
     });
 
-    protocol_->OnAudioChannelClosed([this, &board]() {
-        board.SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
-        // A confirmation cannot be answered over a closed channel, and the
-        // server-side expiry that would clear the screen can no longer arrive.
-        DismissConfirm();
+    protocol_->OnAudioChannelClosed([this]() {
         Schedule([this]() {
+            // An old call can finish closing after the next call has opened.
+            if (protocol_->IsAudioChannelOpened()) {
+                return;
+            }
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+            audio_service_.ResetDecoder();
+#endif
+            Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
+            DismissConfirm();
+            if (GetDeviceState() == kDeviceStateIdle) {
+                return;
+            }
             auto display = Board::GetInstance().GetDisplay();
             display->SetChatMessage("system", "");
             SetDeviceState(kDeviceStateIdle);
@@ -793,7 +826,7 @@ void Application::InitializeProtocol() {
                     if (GetDeviceState() != kDeviceStateSpeaking) {
                         return;
                     }
-#ifdef CONFIG_APOLLO_PROTOCOL
+#if defined(CONFIG_APOLLO_PROTOCOL) && !defined(CONFIG_APOLLO_CODEX_VOICE)
                     // Apollo pushes the whole reply as fast as the link allows,
                     // so "stop" means "that was the last byte", not "playback is
                     // over" — a 7 second reply arrives in about one. Leaving
@@ -961,6 +994,7 @@ void Application::StartListening() { xEventGroupSetBits(event_group_, MAIN_EVENT
 void Application::StopListening() { xEventGroupSetBits(event_group_, MAIN_EVENT_STOP_LISTENING); }
 
 void Application::HandleToggleChatEvent() {
+    call_end_requested_.store(false);
     auto state = GetDeviceState();
 
     if (state == kDeviceStateActivating) {
@@ -999,9 +1033,12 @@ void Application::HandleToggleChatEvent() {
 
 void Application::ContinueOpenAudioChannel(ListeningMode mode) {
     // Check state again in case it was changed during scheduling
-    if (GetDeviceState() != kDeviceStateConnecting) {
+    if (GetDeviceState() != kDeviceStateConnecting || call_end_requested_.load()) {
         return;
     }
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+    Board::GetInstance().GetDisplay()->ShowVoicePage();
+#endif
 
     // Switch to performance mode before connecting to reduce latency
     auto& board = Board::GetInstance();
@@ -1016,6 +1053,11 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
         }
     }
 
+    if (call_end_requested_.load()) {
+        protocol_->CloseAudioChannel();
+        SetDeviceState(kDeviceStateIdle);
+        return;
+    }
     SetListeningMode(mode);
 }
 
@@ -1116,6 +1158,13 @@ void Application::SendGesture(const std::string& gesture) {
             return;
         }
 
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+        if (gesture == "tap" || gesture == "double_tap") {
+            HandleToggleChatEvent();
+        }
+        return;
+#endif
+
         // Recording is on the press-and-hold; a tap is only ever a way to stop
         // something, so it never reaches the server as a gesture.
         if (gesture == "tap") {
@@ -1145,6 +1194,30 @@ void Application::SendGesture(const std::string& gesture) {
         protocol_->SendGesture(gesture);
     });
 }
+
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+void Application::OnVoiceTouchRelease(int x, int y) {
+    Schedule([this, x, y]() {
+        const bool was_asleep = is_screen_asleep_;
+        NoteUserActivity();
+        if (was_asleep || !protocol_ || IsConfirmActive()) {
+            return;
+        }
+        if (!protocol_->IsAudioChannelOpened()) {
+            HandleToggleChatEvent();
+            return;
+        }
+        if (voice_geometry::ContainsButton(voice_geometry::kMuteLeft, x, y)) {
+            // Mute and the send-queue drain both run on this main task.
+            const bool muted = !audio_service_.IsMicrophoneMuted();
+            audio_service_.SetMicrophoneMuted(muted);
+            Board::GetInstance().GetDisplay()->SetVoiceMicrophoneMuted(muted);
+        } else if (voice_geometry::ContainsButton(voice_geometry::kEndLeft, x, y)) {
+            HandleToggleChatEvent();
+        }
+    });
+}
+#endif
 
 void Application::ShowConfirm(const std::string& summary, uint32_t timeout_ms) {
     Schedule([this, summary, timeout_ms]() {
@@ -1412,6 +1485,10 @@ void Application::BeginWakeWordInvoke(const std::string& wake_word) {
         audio_service_.EnableWakeWordDetection(true);
         return;
     }
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+    call_end_requested_.store(false);
+    Board::GetInstance().GetDisplay()->ShowVoicePage();
+#endif
 
     if (!protocol_->IsAudioChannelOpened()) {
         // Schedule to let the state change be processed first (UI update),
@@ -1480,6 +1557,10 @@ void Application::HandleStateChangedEvent() {
     switch (new_state) {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+            voice_model_picker_open_ = false;
+            display->HideVoiceModels();
+#endif
             display->SetStatus(Lang::Strings::STANDBY);
             display->ClearChatMessages();    // Clear messages first
             display->SetEmotion("neutral");  // Then set emotion (wechat mode checks child count)
@@ -1522,7 +1603,9 @@ void Application::HandleStateChangedEvent() {
                 // Only AFE wake word can be detected in speaking mode
                 audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
             }
+#ifndef CONFIG_APOLLO_CODEX_VOICE
             audio_service_.ResetDecoder();
+#endif
             break;
         case kDeviceStateWifiConfiguring:
             audio_service_.EnableVoiceProcessing(false);
@@ -1760,3 +1843,142 @@ void Application::ResetProtocol() {
         protocol_.reset();
     });
 }
+
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+void Application::RefreshWatchInfo() {
+    auto& board = Board::GetInstance();
+    auto display = dynamic_cast<LcdDisplay*>(board.GetDisplay());
+    if (!display) return;
+    WatchUi::Info info;
+    Settings saved_display("display", false);
+    info.brightness = saved_display.GetInt("brightness", 75);
+    info.sleep_seconds = saved_display.GetInt("sleep_seconds", 60);
+    screen_sleep_seconds_ = info.sleep_seconds;
+    if (auto codec = board.GetAudioCodec()) info.volume = codec->output_volume();
+    bool discharging = false;
+    if (!board.GetBatteryLevel(info.battery, info.charging, discharging)) info.battery = -1;
+    info.network = board.GetCurrentWifiNetwork();
+    info.connected = !info.network.empty();
+    info.wifi_status = board.GetWifiStatus();
+    info.saved_networks = board.GetSavedWifiNetworks();
+    info.networks = board.GetAvailableWifiNetworks();
+    for (const auto& name : info.saved_networks)
+        if (std::find(info.networks.begin(), info.networks.end(), name) == info.networks.end())
+            info.networks.push_back(name);
+    info.version = esp_app_get_description()->version;
+    if (auto voice = dynamic_cast<CodexVoiceProtocol*>(protocol_.get())) {
+        Settings settings("codex_voice", false);
+        const std::string selected = settings.GetString("model", "");
+        for (const auto& model : voice->GetModels()) {
+            info.models.push_back(model.name);
+            if (model.id == selected) info.model = model.name;
+        }
+        const std::string selected_chat = settings.GetString("chat", "");
+        for (const auto& chat : voice->GetChats()) {
+            info.chats.push_back(chat.name);
+            if (chat.id == selected_chat) info.chat = chat.name;
+        }
+    }
+    {
+        Settings settings("codex_voice", false);
+        info.temporary_chat = settings.GetBool("temporary", false);
+    }
+    {
+        Settings codex("codex", false);
+        info.reasoning = codex.GetString("reasoning", "Default");
+    }
+    info.notice = pending_watch_notification_;
+    if (!pending_watch_notification_.empty()) {
+        ESP_LOGI(TAG, "Watch notification: %s", pending_watch_notification_.c_str());
+        pending_watch_notification_.clear();
+    }
+    display->UpdateWatchInfo(info);
+}
+void Application::OnWatchAction(WatchUi::Action action, int value,
+                                const std::string& text, const std::string& secret) {
+    if (action == WatchUi::Action::EndCall) call_end_requested_.store(true);
+    Schedule([this, action, value, text, secret]() {
+        NoteUserActivity();
+        auto& board = Board::GetInstance();
+        const bool open = protocol_ && protocol_->IsAudioChannelOpened();
+        switch (action) {
+            case WatchUi::Action::OpenVoice:
+                if (!open && GetDeviceState() == kDeviceStateIdle) HandleToggleChatEvent();
+                break;
+            case WatchUi::Action::EndCall:
+                call_end_requested_.store(true);
+                if (protocol_) protocol_->CloseAudioChannel();
+                if (GetDeviceState() == kDeviceStateConnecting || open) SetDeviceState(kDeviceStateIdle);
+                break;
+            case WatchUi::Action::Mute: {
+                if (!open) break;
+                const bool muted = !audio_service_.IsMicrophoneMuted();
+                audio_service_.SetMicrophoneMuted(muted);
+                board.GetDisplay()->SetVoiceMicrophoneMuted(muted);
+                break;
+            }
+            case WatchUi::Action::Brightness:
+                if (auto backlight = board.GetBacklight()) backlight->SetBrightness(std::clamp(value, 5, 100), true);
+                break;
+            case WatchUi::Action::Volume:
+                if (auto codec = board.GetAudioCodec()) codec->SetOutputVolume(std::clamp(value, 0, 100));
+                break;
+            case WatchUi::Action::ScanWifi:
+                if (open || GetDeviceState() == kDeviceStateConnecting) {
+                    call_end_requested_.store(true);
+                    protocol_->CloseAudioChannel();
+                    SetDeviceState(kDeviceStateIdle);
+                }
+                if (!board.ScanWifiNetworks())
+                    pending_watch_notification_ = "Wi-Fi is busy. Try again shortly.";
+                break;
+            case WatchUi::Action::JoinWifi:
+                if (protocol_) protocol_->CloseAudioChannel();
+                if (open || GetDeviceState() == kDeviceStateConnecting) SetDeviceState(kDeviceStateIdle);
+                if (!(value == 1 ? board.ConnectSavedWifiNetwork(text) : board.ConnectWifiNetwork(text, secret)))
+                    pending_watch_notification_ = "Wi-Fi request could not start";
+                break;
+            case WatchUi::Action::SetupWifi:
+                if (protocol_) protocol_->CloseAudioChannel();
+                board.EnterWifiConfigMode();
+                break;
+            case WatchUi::Action::SelectModel:
+                if (auto voice = dynamic_cast<CodexVoiceProtocol*>(protocol_.get())) {
+                    if (value >= 0 && voice->SelectModel(static_cast<size_t>(value))) {
+                        pending_watch_notification_ = "Model saved for next call";
+                    }
+                }
+                break;
+            case WatchUi::Action::SelectChat:
+                if (auto voice = dynamic_cast<CodexVoiceProtocol*>(protocol_.get())) {
+                    if (value >= 0 && voice->SelectChat(static_cast<size_t>(value))) {
+                        pending_watch_notification_ =
+                            value == 0 ? "Next call starts a new chat" : "Next call continues this chat";
+                    }
+                }
+                break;
+            case WatchUi::Action::TemporaryChat: {
+                Settings s("codex_voice", true);
+                s.SetBool("temporary", value != 0);
+                if (value != 0) s.SetString("chat", "");
+                pending_watch_notification_ =
+                    value != 0 ? "Calls stay out of Codex" : "Calls are saved in Codex";
+                break;
+            }
+            case WatchUi::Action::SelectReasoning: {
+                Settings s("codex", true);
+                s.SetString("reasoning", text);
+                pending_watch_notification_ = "Reasoning saved for next call";
+                break;
+            }
+            case WatchUi::Action::Sleep:
+                if (value != 0 && value != 30 && value != 60 && value != 120 && value != 300) break;
+                screen_sleep_seconds_ = value;
+                { Settings s("display", true); s.SetInt("sleep_seconds", value); }
+                break;
+            default: break;
+        }
+        RefreshWatchInfo();
+    });
+}
+#endif

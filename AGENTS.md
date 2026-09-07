@@ -6,6 +6,12 @@ Apollo's firmware — a hard fork of XiaoZhi (78/xiaozhi-esp32), reduced to exac
 
 Use ESP-IDF v6.0.2.
 
+This active workspace builds only real Codex Voice/WebRTC with the Codex orb.
+Never build or flash Classic/eyes firmware here. The user's separate backup is
+the recovery copy. Before flashing, verify the generated config enables
+APOLLO_CODEX_VOICE and USE_DEFAULT_MESSAGE_STYLE, and the linked image contains
+LcdDisplay::RenderVoiceOrb and CodexVoiceProtocol, not EmoteDisplay.
+
 ## Architecture
 
 - `main/application.*`: main event loop, protocol lifecycle, and high-level behavior.

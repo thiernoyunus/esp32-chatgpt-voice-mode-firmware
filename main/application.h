@@ -18,6 +18,7 @@
 #include "audio_service.h"
 #include "device_state.h"
 #include "device_state_machine.h"
+#include "display/watch_ui.h"
 
 // Main event bits
 #define MAIN_EVENT_SCHEDULE             (1 << 0)
@@ -159,7 +160,10 @@ private:
     std::atomic<int64_t> vad_last_onset_us_{0};
     std::atomic<int64_t> vad_last_offset_us_{0};
     int idle_seconds_ = 0;              // Seconds since the last sign of life
-    bool is_screen_asleep_ = false;
+    std::atomic<bool> is_screen_asleep_{false};
+    std::atomic<bool> call_end_requested_{false};
+    int screen_sleep_seconds_ = 60;
+    std::string pending_watch_notification_;
     int last_channel_attempt_ticks_ = -1000;  // Rate-limits idle channel reopening
     int clock_ticks_ = 0;
     int last_telemetry_ticks_ = 0;
@@ -200,6 +204,17 @@ public:
     // Called from the board's touch task. Opens the channel if needed, because
     // most gestures are useful precisely when the device is sitting idle.
     void SendGesture(const std::string& gesture);
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+    void OnVoiceTouchRelease(int x, int y);
+    bool IsScreenAsleep() const { return is_screen_asleep_.load(); }
+    void OnWatchAction(WatchUi::Action action, int value, const std::string& text,
+                       const std::string& secret);
+    void RefreshWatchInfo();
+private:
+    bool voice_model_picker_open_ = false;
+    size_t voice_model_page_ = 0;
+public:
+#endif
 
     // The confirm screen session. ShowConfirm and DismissConfirm are safe from
     // any task; the touch task polls IsConfirmActive and answers through

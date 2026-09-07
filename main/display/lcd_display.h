@@ -8,6 +8,7 @@
 #include <esp_lcd_panel_ops.h>
 #include <atomic>
 #include <memory>
+#include "watch_ui.h"
 
 #define PREVIEW_IMAGE_DURATION_MS 5000
 
@@ -32,6 +33,34 @@ protected:
     esp_timer_handle_t preview_timer_ = nullptr;
     std::unique_ptr<LvglImage> preview_image_cached_ = nullptr;
     bool hide_subtitle_ = false;  // Control whether to hide chat messages/subtitles
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+    lv_obj_t* voice_root_ = nullptr;
+    std::unique_ptr<WatchUi> watch_ui_;
+    lv_indev_t* touch_input_ = nullptr;
+    std::atomic<uint32_t> touch_sample_{0};
+    lv_obj_t* voice_clock_ = nullptr;
+    lv_obj_t* voice_mute_button_ = nullptr;
+    lv_obj_t* voice_mute_icon_ = nullptr;
+    lv_obj_t* voice_end_button_ = nullptr;
+    lv_obj_t* voice_orb_canvas_ = nullptr;
+    lv_timer_t* voice_orb_timer_ = nullptr;
+    lv_color16_t* voice_orb_buffer_ = nullptr;
+    lv_obj_t* voice_model_label_ = nullptr;
+    lv_obj_t* voice_model_panel_ = nullptr;
+    lv_obj_t* voice_status_icon_ = nullptr;
+    lv_obj_t* voice_status_text_ = nullptr;
+    std::unique_ptr<LvglAllocatedImage> voice_activity_image_;
+    bool voice_tool_active_ = false;
+    bool voice_orb_active_ = false;
+    uint32_t voice_orb_started_at_ = 0;
+    uint32_t voice_orb_color_ = 0x7465EB;
+
+    void RenderVoiceOrb(float seconds);
+    lv_obj_t* confirm_root_ = nullptr;
+    lv_obj_t* confirm_summary_ = nullptr;
+    lv_obj_t* confirm_approve_btn_ = nullptr;
+    lv_obj_t* confirm_reject_btn_ = nullptr;
+#endif
 
     void InitializeLcdThemes();
     virtual bool Lock(int timeout_ms = 0) override;
@@ -45,6 +74,21 @@ protected:
 public:
     ~LcdDisplay();
     virtual void SetEmotion(const char* emotion) override;
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+    void SetStatus(const char* status) override;
+    void SetVoiceMicrophoneMuted(bool muted) override;
+    void SetVoiceActivity(const char* activity, const char* icon = "none",
+                          const char* pixels = nullptr) override;
+    void SetVoiceModel(const char* name) override;
+    void ShowVoiceModels(const std::vector<std::string>& names, size_t page) override;
+    void HideVoiceModels() override;
+    void FeedTouch(bool pressed, int x, int y) override;
+    void ShowVoicePage() override;
+    void UpdateWatchInfo(const WatchUi::Info& info);
+    void UpdateStatusBar(bool update_all = false) override;
+    void ShowConfirmScreen(const char* summary) override;
+    void HideConfirmScreen() override;
+#endif
     virtual void SetChatMessage(const char* role, const char* content) override;
     virtual void ClearChatMessages() override;
     virtual void SetPreviewImage(std::unique_ptr<LvglImage> image) override;

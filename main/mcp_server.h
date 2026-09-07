@@ -277,9 +277,12 @@ public:
 
         if (std::holds_alternative<ImageContent*>(return_value)) {
             auto image_content = std::get<ImageContent*>(return_value);
-            cJSON* image = cJSON_CreateObject();
-            cJSON_AddStringToObject(image, "type", "image");
-            cJSON_AddStringToObject(image, "image", image_content->to_json().c_str());
+            cJSON* image = cJSON_Parse(image_content->to_json().c_str());
+            if (image == nullptr) {
+                delete image_content;
+                cJSON_Delete(result);
+                throw std::runtime_error("Failed to serialize image content");
+            }
             cJSON_AddItemToArray(content, image);
             delete image_content;
         } else {

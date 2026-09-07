@@ -41,13 +41,13 @@ config APOLLO_DEVICE_ID
         Falls back to the MAC address when left empty.
 
 config APOLLO_CODEX_VOICE
-    bool "Use ChatGPT Codex Voice over WebRTC"
+    bool
     depends on APOLLO_PROTOCOL && IDF_TARGET_ESP32S3
-    default n
+    default y
     help
         Replaces Apollo's Soniox audio path with a direct WebRTC voice call
-        created through the logged-in Codex bridge. Classic Apollo remains the
-        default when this option is off.
+        created through the logged-in Codex bridge, with the Codex orb display.
+        This workspace builds only Codex Voice. Classic lives in its backup.
 
 config APOLLO_NTP_SERVER
     string "NTP server"
@@ -155,10 +155,11 @@ choice DISPLAY_STYLE
 
     config USE_WECHAT_MESSAGE_STYLE
         bool "Enable WeChat Message Style"
+        depends on !APOLLO_CODEX_VOICE
 
     config USE_EMOTE_MESSAGE_STYLE
         bool "Emote animation style"
-        depends on BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85C
+        depends on BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85C && !APOLLO_CODEX_VOICE
 endchoice
 
 config USE_MULTILINE_CHAT_MESSAGE

@@ -27,6 +27,7 @@ public:
     virtual void ShowConfirmScreen(const char* summary) override;
     virtual void HideConfirmScreen() override;
     virtual void SetPreviewImage(const void* image);
+    virtual bool SnapshotToJpeg(std::string& jpeg_data, int quality = 80) override;
 
     // Show or hide a named object from the layout, e.g. "clock_label".
     bool SetObjectVisible(const char* name, bool visible);

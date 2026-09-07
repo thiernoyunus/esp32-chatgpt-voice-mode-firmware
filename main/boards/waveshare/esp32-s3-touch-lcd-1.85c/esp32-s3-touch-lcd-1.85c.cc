@@ -473,6 +473,7 @@ private:
 
     void TouchGestureTask() {
         bool was_pressed = false;
+        bool swallow_touch = false;
         int consecutive_read_failures = 0;
         bool auto_sleep_rearmed = false;
         int start_x = 0, start_y = 0, last_x = 0, last_y = 0;
@@ -502,6 +503,7 @@ private:
                             is_hold_talking = false;
                             Application::GetInstance().StopListening();
                         }
+                        display_->FeedTouch(false, last_x, last_y);
                         ESP_LOGE(TAG, "Touch controller unresponsive, stopping gesture task");
                         vTaskDelete(nullptr);
                         return;
@@ -514,6 +516,24 @@ private:
             bool is_pressed =
                 esp_lcd_touch_get_coordinates(touch_handle_, &x, &y, nullptr, &point_count, 1) &&
                 point_count > 0;
+
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+            // Feed the toolkit once per sample; never also dispatch legacy gestures.
+            auto& app = Application::GetInstance();
+            if (is_pressed && !was_pressed) {
+                swallow_touch = app.IsScreenAsleep();
+                app.Schedule([&app]() { app.NoteUserActivity(); });
+            }
+            display_->FeedTouch(is_pressed && !swallow_touch && !app.IsConfirmActive(),
+                                is_pressed ? x : last_x, is_pressed ? y : last_y);
+            if (app.IsConfirmActive() && was_pressed && !is_pressed && !swallow_touch)
+                app.OnConfirmTouchRelease(last_x, last_y);
+            if (is_pressed) { last_x = x; last_y = y; }
+            if (!is_pressed) swallow_touch = false;
+            was_pressed = is_pressed;
+            vTaskDelay(pdMS_TO_TICKS(kTouchPollMs));
+            continue;
+#endif
 
             // A live confirm screen owns the touch: the release hit-tests the
             // two buttons immediately — waiting out the double-tap window would
@@ -582,6 +602,10 @@ private:
                     EmitGesture(dx > 0 ? "swipe_right" : "swipe_left");
                 } else if (held_ms <= kTapMaxMs && abs(dx) < kTapMaxTravelPx &&
                            abs(dy) < kTapMaxTravelPx) {
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+                    pending_tap_ms = 0;
+                    Application::GetInstance().OnVoiceTouchRelease(last_x, last_y);
+#else
                     if (pending_tap_ms != 0) {
                         pending_tap_ms = 0;
                         EmitGesture("double_tap");
@@ -590,6 +614,7 @@ private:
                         // the double tap window closes without a second press.
                         pending_tap_ms = now_ms;
                     }
+#endif
                 }
             }
 

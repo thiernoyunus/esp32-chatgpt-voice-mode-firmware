@@ -3,6 +3,9 @@
 #include "gif/lvgl_gif.h"
 #include "lvgl_theme.h"
 #include "settings.h"
+#include "voice_geometry.h"
+#include "confirm_geometry.h"
+#include "watch_icons.h"
 
 #include <esp_err.h>
 #include <esp_log.h>
@@ -12,10 +15,16 @@
 #include <noto_emoji.h>
 #include <src/misc/cache/lv_cache.h>
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <vector>
 
 #include "board.h"
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+#include "application.h"
+#include <esp_heap_caps.h>
+#include <mbedtls/base64.h>
+#endif
 
 #define TAG "LcdDisplay"
 
@@ -23,6 +32,59 @@ LV_FONT_DECLARE(BUILTIN_TEXT_FONT);
 LV_FONT_DECLARE(BUILTIN_ICON_FONT);
 LV_FONT_DECLARE(font_material_symbols_30_4);
 LV_FONT_DECLARE(font_noto_emoji_30_4);
+
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+namespace {
+// Fluid shading ported from Rare UI's Fluid Orb: https://www.rareui.com/components/fluidorb
+constexpr uint32_t kFluidOrbFramePeriodMs = 66;
+constexpr int kFluidOrbSampleStep = 2;
+
+float FluidOrbMix(float first, float second, float amount) {
+    return first + (second - first) * amount;
+}
+
+float FluidOrbSmoothStep(float edge0, float edge1, float value) {
+    const float amount = std::clamp((value - edge0) / (edge1 - edge0), 0.0f, 1.0f);
+    return amount * amount * (3.0f - 2.0f * amount);
+}
+
+float FluidOrbHash(float x, float y) {
+    // The browser shader uses sine here; an integer hash keeps the same smooth noise field
+    // without hundreds of thousands of trig calls per frame on the ESP32.
+    const uint32_t ix = static_cast<uint32_t>(static_cast<int32_t>(x));
+    const uint32_t iy = static_cast<uint32_t>(static_cast<int32_t>(y));
+    uint32_t value = ix * 374761393u + iy * 668265263u;
+    value = (value ^ (value >> 13)) * 1274126177u;
+    value ^= value >> 16;
+    return static_cast<float>(value) / 4294967295.0f;
+}
+
+float FluidOrbNoise(float x, float y) {
+    const float ix = std::floor(x);
+    const float iy = std::floor(y);
+    const float fx = x - ix;
+    const float fy = y - iy;
+    const float ux = fx * fx * (3.0f - 2.0f * fx);
+    const float uy = fy * fy * (3.0f - 2.0f * fy);
+    const float lower = FluidOrbMix(FluidOrbHash(ix, iy), FluidOrbHash(ix + 1.0f, iy), ux);
+    const float upper = FluidOrbMix(FluidOrbHash(ix, iy + 1.0f),
+                                    FluidOrbHash(ix + 1.0f, iy + 1.0f), ux);
+    return FluidOrbMix(lower, upper, uy);
+}
+
+float FluidOrbFbm(float x, float y) {
+    float value = 0.0f;
+    float amplitude = 0.6f;
+    for (int octave = 0; octave < 3; ++octave) {
+        value += amplitude * FluidOrbNoise(x, y);
+        x *= 2.0f;
+        y *= 2.0f;
+        amplitude *= 0.5f;
+    }
+    return value;
+}
+}  // namespace
+#endif
 
 void LcdDisplay::InitializeLcdThemes() {
     auto text_font = std::make_shared<LvglBuiltInFont>(&BUILTIN_TEXT_FONT);
@@ -79,6 +141,9 @@ LcdDisplay::LcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_
     // Load theme from settings
     Settings settings("display", false);
     std::string theme_name = settings.GetString("theme", "light");
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+    theme_name = "dark";
+#endif
     current_theme_ = LvglThemeManager::GetInstance().GetTheme(theme_name);
 
     // Create a timer to hide the preview image
@@ -292,6 +357,15 @@ MipiLcdDisplay::MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel
 LcdDisplay::~LcdDisplay() {
     SetPreviewImage(nullptr);
 
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+    if (touch_input_) lv_indev_delete(touch_input_);
+    watch_ui_.reset();
+    if (voice_orb_timer_ != nullptr) {
+        lv_timer_delete(voice_orb_timer_);
+        voice_orb_timer_ = nullptr;
+    }
+#endif
+
     // Clean up GIF controller
     if (gif_controller_) {
         gif_controller_->Stop();
@@ -318,6 +392,12 @@ LcdDisplay::~LcdDisplay() {
     if (emoji_box_ != nullptr) {
         lv_obj_del(emoji_box_);
     }
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+    if (voice_orb_buffer_ != nullptr) {
+        heap_caps_free(voice_orb_buffer_);
+        voice_orb_buffer_ = nullptr;
+    }
+#endif
     if (content_ != nullptr) {
         lv_obj_del(content_);
     }
@@ -833,7 +913,14 @@ void LcdDisplay::SetupUI() {
     auto icon_font = lvgl_theme->icon_font()->font();
     auto large_icon_font = lvgl_theme->large_icon_font()->font();
 
-    auto screen = lv_screen_active();
+    voice_root_ = lv_obj_create(lv_screen_active());
+    lv_obj_set_size(voice_root_, 360, 360);
+    lv_obj_set_pos(voice_root_, 0, 0);
+    lv_obj_set_style_pad_all(voice_root_, 0, 0);
+    lv_obj_set_style_border_width(voice_root_, 0, 0);
+    lv_obj_set_style_radius(voice_root_, 0, 0);
+    lv_obj_remove_flag(voice_root_, LV_OBJ_FLAG_SCROLLABLE);
+    auto screen = voice_root_;
     lv_obj_set_style_text_font(screen, text_font, 0);
     lv_obj_set_style_text_color(screen, lvgl_theme->text_color(), 0);
     lv_obj_set_style_bg_color(screen, lvgl_theme->background_color(), 0);
@@ -1001,6 +1088,131 @@ void LcdDisplay::SetupUI() {
     lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);  // Hide until there is content
 #endif
 
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+    // Keep text inside the circle, away from the clipped top and bottom edges.
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x0C1220), 0);
+    lv_obj_set_style_bg_color(container_, lv_color_hex(0x0C1220), 0);
+    lv_obj_remove_flag(container_, static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+    lv_obj_set_style_text_color(status_label_, lv_color_white(), 0);
+    lv_obj_set_style_text_color(notification_label_, lv_color_white(), 0);
+    lv_obj_set_style_text_color(chat_message_label_, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(bottom_bar_, LV_OPA_TRANSP, 0);
+    lv_obj_set_width(top_bar_, 160);
+    lv_obj_align(top_bar_, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_add_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
+    // Activity updates resize the pill to its text, capped at 260px.
+    lv_obj_set_size(status_bar_, 220, 36);
+    lv_obj_align(status_bar_, LV_ALIGN_CENTER, 0, 4);
+    lv_obj_set_style_radius(status_bar_, 32, 0);
+    lv_obj_set_style_bg_color(status_bar_, lv_color_hex(0x303346), 0);
+    lv_obj_set_style_bg_opa(status_bar_, LV_OPA_80, 0);
+    lv_obj_set_size(status_label_, 200, 24);
+    lv_obj_set_size(notification_label_, 200, 24);
+    lv_label_set_long_mode(status_label_, LV_LABEL_LONG_DOT);
+    lv_label_set_long_mode(notification_label_, LV_LABEL_LONG_DOT);
+    // Leave space between the orb, captions, and call controls.
+    lv_obj_set_size(bottom_bar_, 190, 26);
+    lv_obj_align(bottom_bar_, LV_ALIGN_BOTTOM_MID, 0, -24);
+    lv_obj_set_size(chat_message_label_, 184, 24);
+    lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_SCROLL);
+
+    // One small connector icon beside the activity text.
+    voice_status_icon_ = lv_obj_create(status_bar_);
+    lv_obj_set_size(voice_status_icon_, 24, 32);
+    lv_obj_align(voice_status_icon_, LV_ALIGN_LEFT_MID, 8, 0);
+    lv_obj_set_style_bg_opa(voice_status_icon_, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_border_width(voice_status_icon_, 0, 0);
+    lv_obj_set_style_pad_all(voice_status_icon_, 0, 0);
+    lv_obj_remove_flag(voice_status_icon_, LV_OBJ_FLAG_SCROLLABLE);
+    voice_status_text_ = lv_label_create(status_bar_);
+    lv_obj_set_size(voice_status_text_, 168, 48);
+    lv_obj_align(voice_status_text_, LV_ALIGN_LEFT_MID, 36, 0);
+    lv_obj_set_style_text_color(voice_status_text_, lv_color_white(), 0);
+    lv_label_set_long_mode(voice_status_text_, LV_LABEL_LONG_DOT);
+    lv_label_set_text(voice_status_text_, "");
+    lv_obj_add_flag(voice_status_text_, LV_OBJ_FLAG_HIDDEN);
+    voice_tool_active_ = false;
+
+    lv_obj_add_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_set_size(emoji_box_, voice_geometry::kOrbSize, voice_geometry::kOrbSize);
+    lv_obj_align(emoji_box_, LV_ALIGN_CENTER, 0, 4);
+    lv_obj_set_style_radius(emoji_box_, LV_RADIUS_CIRCLE, 0);
+    lv_obj_set_style_clip_corner(emoji_box_, true, 0);
+    lv_obj_set_style_bg_opa(emoji_box_, LV_OPA_COVER, 0);
+    lv_obj_set_style_bg_color(emoji_box_, lv_color_hex(0x7465EB), 0);
+    lv_obj_set_style_bg_grad_color(emoji_box_, lv_color_hex(0xD9EFFF), 0);
+    lv_obj_set_style_bg_grad_dir(emoji_box_, LV_GRAD_DIR_VER, 0);
+
+    const size_t orb_buffer_size = static_cast<size_t>(voice_geometry::kOrbSize) *
+                                   voice_geometry::kOrbSize * sizeof(lv_color16_t);
+    voice_orb_buffer_ = static_cast<lv_color16_t*>(
+        heap_caps_malloc(orb_buffer_size, MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (voice_orb_buffer_ == nullptr) {
+        voice_orb_buffer_ = static_cast<lv_color16_t*>(
+            heap_caps_malloc(orb_buffer_size, MALLOC_CAP_8BIT));
+    }
+    if (voice_orb_buffer_ != nullptr) {
+        voice_orb_canvas_ = lv_canvas_create(emoji_box_);
+        if (voice_orb_canvas_ != nullptr) {
+            lv_canvas_set_buffer(voice_orb_canvas_, voice_orb_buffer_, voice_geometry::kOrbSize,
+                                 voice_geometry::kOrbSize, LV_COLOR_FORMAT_RGB565);
+            lv_obj_set_size(voice_orb_canvas_, voice_geometry::kOrbSize, voice_geometry::kOrbSize);
+            lv_obj_align(voice_orb_canvas_, LV_ALIGN_CENTER, 0, 0);
+            lv_obj_set_style_radius(voice_orb_canvas_, LV_RADIUS_CIRCLE, 0);
+            lv_obj_set_style_clip_corner(voice_orb_canvas_, true, 0);
+            lv_obj_set_style_image_opa(voice_orb_canvas_, LV_OPA_50, 0);
+            lv_obj_remove_flag(voice_orb_canvas_, LV_OBJ_FLAG_SCROLLABLE);
+            RenderVoiceOrb(0.0f);
+            voice_orb_timer_ = lv_timer_create(
+                [](lv_timer_t* timer) {
+                    auto display = static_cast<LcdDisplay*>(lv_timer_get_user_data(timer));
+                    if (display->voice_orb_active_ && !lv_obj_has_flag(display->voice_root_, LV_OBJ_FLAG_HIDDEN)) {
+                        display->RenderVoiceOrb(
+                            static_cast<float>(lv_tick_elaps(display->voice_orb_started_at_)) /
+                            1000.0f);
+                    }
+                },
+                kFluidOrbFramePeriodMs, this);
+            if (voice_orb_timer_ != nullptr) {
+                lv_timer_pause(voice_orb_timer_);
+            }
+        } else {
+            heap_caps_free(voice_orb_buffer_);
+            voice_orb_buffer_ = nullptr;
+        }
+    }
+
+    for (int index = 0; index < 2; ++index) {
+        auto button = lv_obj_create(screen);
+        lv_obj_set_size(button, voice_geometry::kButtonSize, voice_geometry::kButtonSize);
+        lv_obj_set_pos(button, index == 0 ? voice_geometry::kMuteLeft : voice_geometry::kEndLeft,
+                       voice_geometry::kButtonTop);
+        lv_obj_set_style_radius(button, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(0x292929), 0);
+        lv_obj_set_style_border_width(button, 0, 0);
+        lv_obj_set_style_pad_all(button, 0, 0);
+        lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
+        auto icon = lv_label_create(button);
+        lv_obj_set_style_text_font(icon, large_icon_font, 0);
+        lv_obj_set_style_text_color(icon, lv_color_white(), 0);
+        lv_label_set_text(icon, index == 0 ? MATERIAL_SYMBOLS_MIC : MATERIAL_SYMBOLS_CLOSE);
+        lv_obj_center(icon);
+        lv_obj_add_event_cb(button, [](lv_event_t* e) {
+            auto display = static_cast<LcdDisplay*>(lv_event_get_user_data(e));
+            auto action = lv_event_get_target(e) == display->voice_mute_button_
+                              ? WatchUi::Action::Mute : WatchUi::Action::EndCall;
+            Application::GetInstance().OnWatchAction(action, 0, "", "");
+        }, LV_EVENT_CLICKED, this);
+        lv_obj_add_flag(button, LV_OBJ_FLAG_HIDDEN);
+        if (index == 0) {
+            voice_mute_button_ = button;
+            voice_mute_icon_ = icon;
+        } else {
+            voice_end_button_ = button;
+        }
+    }
+#endif
+
     low_battery_popup_ = lv_obj_create(screen);
     lv_obj_set_scrollbar_mode(low_battery_popup_, LV_SCROLLBAR_MODE_OFF);
     lv_obj_set_size(low_battery_popup_, LV_HOR_RES * 0.9, text_font->line_height * 2);
@@ -1013,6 +1225,51 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_text_color(low_battery_label_, lv_color_white(), 0);
     lv_obj_center(low_battery_label_);
     lv_obj_add_flag(low_battery_popup_, LV_OBJ_FLAG_HIDDEN);
+    watch_ui_ = std::make_unique<WatchUi>(voice_root_, lvgl_theme->text_font(),
+        [](WatchUi::Action a, int n, const std::string& text, const std::string& secret) {
+            Application::GetInstance().OnWatchAction(a, n, text, secret);
+        });
+    for (int i = 0; i < 2; ++i) {
+        auto b = lv_obj_create(screen);
+        lv_obj_set_pos(b, i == 0 ? 62 : 246, 62);
+        lv_obj_set_size(b, 52, 52);
+        lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_pad_all(b, 0, 0);
+        lv_obj_set_style_border_width(b, 0, 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(0x181F2C), 0);
+        lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
+        auto icon = lv_image_create(b);
+        lv_image_set_src(icon, i == 0 ? &watch_icons::home : &watch_icons::more);
+        lv_obj_set_style_image_recolor(icon, lv_color_white(), 0);
+        lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
+        lv_obj_center(icon);
+        lv_obj_add_event_cb(b, [](lv_event_t* e) {
+            auto self = static_cast<LcdDisplay*>(lv_event_get_user_data(e));
+            const bool home = lv_obj_get_x(static_cast<lv_obj_t*>(lv_event_get_target(e))) == 62;
+            if (home) Application::GetInstance().OnWatchAction(WatchUi::Action::EndCall, 0, "", "");
+            self->watch_ui_->Show(home ? WatchUi::Page::Home : WatchUi::Page::CodexSettings);
+            Application::GetInstance().OnWatchAction(WatchUi::Action::Refresh, 0, "", "");
+        }, LV_EVENT_CLICKED, this);
+    }
+    voice_clock_ = lv_label_create(screen);
+    lv_label_set_text(voice_clock_, "--:--");
+    lv_obj_align(voice_clock_, LV_ALIGN_TOP_MID, 0, 26);
+    lv_obj_add_event_cb(emoji_box_, [](lv_event_t*) {
+        Application::GetInstance().OnWatchAction(WatchUi::Action::OpenVoice, 0, "", "");
+    }, LV_EVENT_CLICKED, this);
+    lv_obj_remove_flag(status_bar_, static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_CLICKABLE | LV_OBJ_FLAG_SCROLLABLE));
+    touch_input_ = lv_indev_create();
+    lv_indev_set_type(touch_input_, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_display(touch_input_, display_);
+    lv_indev_set_user_data(touch_input_, this);
+    lv_indev_set_read_cb(touch_input_, [](lv_indev_t* input, lv_indev_data_t* data) {
+        auto self = static_cast<LcdDisplay*>(lv_indev_get_user_data(input));
+        const uint32_t sample = self->touch_sample_.load();
+        data->point.x = sample & 0x1ff;
+        data->point.y = (sample >> 9) & 0x1ff;
+        data->state = (sample >> 18) ? LV_INDEV_STATE_PRESSED : LV_INDEV_STATE_RELEASED;
+    });
+    ESP_LOGI(TAG, "Codex watch UI: home, voice, settings, keyboard; LVGL touch ready");
 }
 
 void LcdDisplay::SetPreviewImage(std::unique_ptr<LvglImage> image) {
@@ -1076,7 +1333,7 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
             lv_obj_remove_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
         }
     }
-#if CONFIG_USE_MULTILINE_CHAT_MESSAGE
+#if CONFIG_USE_MULTILINE_CHAT_MESSAGE && !defined(CONFIG_APOLLO_CODEX_VOICE)
     // Re-align bottom_bar_ after text change so it stays anchored to the bottom
     // as its height adapts to the wrapped content.
     if (bottom_bar_ != nullptr) {
@@ -1097,7 +1354,301 @@ void LcdDisplay::ClearChatMessages() {
 }
 #endif
 
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+void LcdDisplay::SetVoiceModel(const char* name) {
+    DisplayLockGuard lock(this);
+    if (voice_model_label_ != nullptr) {
+        const char* short_name = strrchr(name, '/');
+        lv_label_set_text(voice_model_label_, short_name == nullptr ? name : short_name + 1);
+    }
+}
+
+void LcdDisplay::HideVoiceModels() {
+    DisplayLockGuard lock(this);
+    if (voice_model_panel_ != nullptr) lv_obj_add_flag(voice_model_panel_, LV_OBJ_FLAG_HIDDEN);
+}
+
+void LcdDisplay::ShowVoiceModels(const std::vector<std::string>& names, size_t page) {
+    DisplayLockGuard lock(this);
+    if (voice_model_panel_ == nullptr) {
+        voice_model_panel_ = lv_obj_create(lv_screen_active());
+        lv_obj_set_size(voice_model_panel_, width_, height_);
+        lv_obj_set_pos(voice_model_panel_, 0, 0);
+        lv_obj_set_style_bg_color(voice_model_panel_, lv_color_black(), 0);
+        lv_obj_set_style_text_color(voice_model_panel_, lv_color_white(), 0);
+        lv_obj_set_style_pad_all(voice_model_panel_, 0, 0);
+        lv_obj_set_style_border_width(voice_model_panel_, 0, 0);
+        lv_obj_remove_flag(voice_model_panel_, LV_OBJ_FLAG_SCROLLABLE);
+    }
+    lv_obj_clean(voice_model_panel_);
+    lv_obj_remove_flag(voice_model_panel_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(voice_model_panel_);
+    auto title = lv_label_create(voice_model_panel_);
+    lv_label_set_text(title, "Model for next call");
+    lv_obj_align(title, LV_ALIGN_TOP_MID, 0, 56);
+    if (names.empty() || (names.size() == 1 && names.front() == "Default")) {
+        auto hint = lv_label_create(voice_model_panel_);
+        lv_obj_set_width(hint, 220);
+        lv_label_set_text(hint, "Open a call first\nto load your models");
+        lv_obj_set_style_text_align(hint, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_align(hint, LV_ALIGN_CENTER, 0, 20);
+    }
+    for (int row = 0; row < voice_geometry::kModelsPerPage; ++row) {
+        const size_t index = page * voice_geometry::kModelsPerPage + row;
+        if (index >= names.size()) break;
+        auto button = lv_obj_create(voice_model_panel_);
+        lv_obj_set_pos(button, voice_geometry::kModelRowLeft,
+                       voice_geometry::kModelRowTop + row * voice_geometry::kModelRowStep);
+        lv_obj_set_size(button, voice_geometry::kModelRowWidth, voice_geometry::kModelRowHeight);
+        lv_obj_set_style_bg_color(button, lv_color_hex(0x292929), 0);
+        lv_obj_set_style_border_width(button, 0, 0);
+        lv_obj_set_style_pad_all(button, 0, 0);
+        lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
+        auto label = lv_label_create(button);
+        const char* short_name = strrchr(names[index].c_str(), '/');
+        lv_label_set_text(label, short_name == nullptr ? names[index].c_str() : short_name + 1);
+        lv_obj_set_width(label, 200);
+        lv_label_set_long_mode(label, LV_LABEL_LONG_DOT);
+        lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_center(label);
+    }
+    for (int index = 0; index < 2; ++index) {
+        auto button = lv_obj_create(voice_model_panel_);
+        lv_obj_set_pos(button, index == 0 ? voice_geometry::kMuteLeft : voice_geometry::kEndLeft,
+                       voice_geometry::kButtonTop);
+        lv_obj_set_size(button, voice_geometry::kButtonSize, voice_geometry::kButtonSize);
+        lv_obj_set_style_radius(button, LV_RADIUS_CIRCLE, 0);
+        lv_obj_set_style_pad_all(button, 0, 0);
+        lv_obj_set_style_border_width(button, 0, 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(0x292929), 0);
+        lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
+        auto label = lv_label_create(button);
+        lv_label_set_text(label, index == 0 ? "Back" : "Next");
+        lv_obj_center(label);
+    }
+}
+
+static bool VoiceIconIsThinking(const char* activity) {
+    if (activity == nullptr) return false;
+    auto eq_ci = [](const char* a, const char* b, size_t n) {
+        for (size_t i = 0; i < n; ++i) {
+            char ca = a[i], cb = b[i];
+            if (ca >= 'A' && ca <= 'Z') ca = static_cast<char>(ca + 32);
+            if (cb >= 'A' && cb <= 'Z') cb = static_cast<char>(cb + 32);
+            if (ca != cb || ca == '\0') return ca == cb;
+        }
+        return true;
+    };
+    while (*activity == ' ' || *activity == '\t') ++activity;
+    return eq_ci(activity, "thinking", 8) || eq_ci(activity, "reasoning", 9);
+}
+
+
+static void SizeVoicePill(lv_obj_t* bar, lv_obj_t* label, const char* text, bool has_icon) {
+    if (bar == nullptr || label == nullptr || text == nullptr) return;
+    lv_point_t size{};
+    lv_text_get_size(&size, text, lv_obj_get_style_text_font(label, LV_PART_MAIN), 0, 0,
+                     LV_COORD_MAX, LV_TEXT_FLAG_NONE);
+    const int icon_space = has_icon ? 32 : 0;
+    const int width = std::clamp(static_cast<int>(size.x) + 24 + icon_space, 100, 260);
+    lv_obj_set_width(bar, width);
+    lv_obj_set_size(label, width - 24 - icon_space, LV_SIZE_CONTENT);
+    lv_obj_align(label, LV_ALIGN_CENTER, icon_space / 2, 0);
+}
+
+void LcdDisplay::SetVoiceActivity(const char* activity, const char* icon, const char* pixels) {
+    DisplayLockGuard lock(this);
+    if (voice_status_text_ == nullptr) return;
+    lv_obj_clean(voice_status_icon_);
+    if (voice_activity_image_) {
+        lv_image_cache_drop(voice_activity_image_->image_dsc());
+        voice_activity_image_.reset();
+    }
+    lv_obj_add_flag(voice_status_icon_, LV_OBJ_FLAG_HIDDEN);
+    if (activity == nullptr || activity[0] == '\0' || strcmp(activity, "Listening") == 0) {
+        voice_tool_active_ = false;
+        SetStatus(Lang::Strings::LISTENING);
+        return;
+    }
+    voice_tool_active_ = !VoiceIconIsThinking(activity) && strcmp(activity, "Answering…") != 0;
+    lv_label_set_text(voice_status_text_, activity);
+    lv_obj_remove_flag(voice_status_text_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_add_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
+    bool has_icon = false;
+    if (!VoiceIconIsThinking(activity) && pixels != nullptr && strlen(pixels) == 3072) {
+        // One 24px BGRA icon; never decode a downloaded image on the device.
+        auto data = static_cast<unsigned char*>(heap_caps_malloc(2304, MALLOC_CAP_8BIT));
+        size_t size = 0;
+        if (data != nullptr && mbedtls_base64_decode(data, 2304, &size,
+                reinterpret_cast<const unsigned char*>(pixels), 3072) == 0 && size == 2304) {
+            voice_activity_image_ = std::make_unique<LvglAllocatedImage>(
+                data, size, 24, 24, 96, LV_COLOR_FORMAT_ARGB8888);
+            auto image = lv_image_create(voice_status_icon_);
+            lv_image_set_src(image, voice_activity_image_->image_dsc());
+            lv_obj_center(image);
+            has_icon = true;
+        } else {
+            heap_caps_free(data);
+        }
+    }
+    if (!has_icon && icon != nullptr && strcmp(icon, "search") == 0 &&
+        !VoiceIconIsThinking(activity)) {
+        auto label = lv_label_create(voice_status_icon_);
+        lv_obj_set_style_text_font(label, &BUILTIN_ICON_FONT, 0);
+        lv_obj_set_style_text_color(label, lv_color_white(), 0);
+        lv_label_set_text(label, MATERIAL_SYMBOLS_SEARCH);
+        lv_obj_center(label);
+        has_icon = true;
+    }
+    if (has_icon) lv_obj_remove_flag(voice_status_icon_, LV_OBJ_FLAG_HIDDEN);
+    SizeVoicePill(status_bar_, voice_status_text_, activity, has_icon);
+}
+
+void LcdDisplay::SetVoiceMicrophoneMuted(bool muted) {
+    DisplayLockGuard lock(this);
+    if (voice_mute_icon_ == nullptr) {
+        return;
+    }
+    lv_label_set_text(voice_mute_icon_, muted ? MATERIAL_SYMBOLS_MIC_OFF : MATERIAL_SYMBOLS_MIC);
+    lv_obj_set_style_bg_color(voice_mute_button_, lv_color_hex(muted ? 0xA52C3D : 0x292929), 0);
+}
+
+void LcdDisplay::SetStatus(const char* status) {
+    DisplayLockGuard lock(this);
+    const bool mic_muted = Application::GetInstance().GetAudioService().IsMicrophoneMuted();
+    // When muted we must not say "Listening" on the pill, but an active tool
+    // caption still owns the pill — don't overwrite it.
+    const char* pill_status = status;
+    if (mic_muted && strcmp(status, Lang::Strings::LISTENING) == 0) {
+        pill_status = "Muted";
+    }
+    // STANDBY/Error means the call ended, and SPEAKING means the reply is
+    // already being read out — either way the tool caption is stale. Without
+    // clearing it here the pill keeps showing the last tool caption for the
+    // rest of the call, because nothing else ever releases the latch.
+    if (strcmp(status, Lang::Strings::STANDBY) == 0 ||
+        strcmp(status, Lang::Strings::ERROR) == 0 ||
+        strcmp(status, Lang::Strings::SPEAKING) == 0) {
+        voice_tool_active_ = false;
+    }
+    if (!voice_tool_active_) {
+        LvglDisplay::SetStatus(pill_status);
+        SizeVoicePill(status_bar_, status_label_, pill_status, false);
+        if (voice_status_text_ != nullptr) {
+            lv_obj_add_flag(voice_status_text_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
+        }
+        if (voice_status_icon_ != nullptr) {
+            lv_obj_add_flag(voice_status_icon_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    if (emoji_box_ == nullptr) {
+        return;
+    }
+    const bool listening = strcmp(status, Lang::Strings::LISTENING) == 0;
+    const bool speaking = strcmp(status, Lang::Strings::SPEAKING) == 0;
+    const bool connecting = strcmp(status, Lang::Strings::CONNECTING) == 0;
+    // Mute affects INPUT only. Output (SPEAKING) and the connecting handshake
+    // keep pulsing; only LISTENING-with-mic-muted goes dim.
+    const bool orb_active = speaking || connecting || (listening && !mic_muted);
+    if (watch_ui_) watch_ui_->SetCallActive(speaking || listening || connecting);
+    if (voice_mute_button_ != nullptr && voice_end_button_ != nullptr) {
+        const bool connected = listening || speaking;
+        if (connected) {
+            lv_obj_remove_flag(voice_mute_button_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_remove_flag(voice_end_button_, LV_OBJ_FLAG_HIDDEN);
+        } else {
+            lv_obj_add_flag(voice_mute_button_, LV_OBJ_FLAG_HIDDEN);
+            lv_obj_add_flag(voice_end_button_, LV_OBJ_FLAG_HIDDEN);
+        }
+    }
+    const uint32_t orb_color = strcmp(status, Lang::Strings::ERROR) == 0 ? 0xCF4B59 : 0x7465EB;
+    const bool was_orb_active = voice_orb_active_;
+    voice_orb_color_ = orb_color;
+    voice_orb_active_ = orb_active;
+    lv_obj_set_style_bg_opa(emoji_box_, orb_active ? LV_OPA_COVER : LV_OPA_50, 0);
+    lv_obj_set_style_bg_color(emoji_box_, lv_color_hex(orb_color), 0);
+    if (orb_active) {
+        if (!was_orb_active) voice_orb_started_at_ = lv_tick_get();
+        if (voice_orb_timer_ != nullptr) lv_timer_resume(voice_orb_timer_);
+        if (voice_orb_canvas_ != nullptr) {
+            RenderVoiceOrb(static_cast<float>(lv_tick_elaps(voice_orb_started_at_)) / 1000.0f);
+            lv_obj_set_style_image_opa(voice_orb_canvas_, LV_OPA_COVER, 0);
+        }
+    } else {
+        if (voice_orb_timer_ != nullptr) lv_timer_pause(voice_orb_timer_);
+        if (voice_orb_canvas_ != nullptr) {
+            RenderVoiceOrb(0.0f);
+            lv_obj_set_style_image_opa(voice_orb_canvas_, LV_OPA_50, 0);
+        }
+    }
+}
+
+void LcdDisplay::RenderVoiceOrb(float seconds) {
+    if (voice_orb_canvas_ == nullptr || voice_orb_buffer_ == nullptr) return;
+
+    const int size = voice_geometry::kOrbSize;
+    const float color_r = static_cast<float>((voice_orb_color_ >> 16) & 0xFF) / 255.0f;
+    const float color_g = static_cast<float>((voice_orb_color_ >> 8) & 0xFF) / 255.0f;
+    const float color_b = static_cast<float>(voice_orb_color_ & 0xFF) / 255.0f;
+    const float t = seconds * 0.22f;
+    const float drift_x = std::sin(t) + 0.6f * std::sin(t * 1.7f + 1.3f);
+    const float drift_y = std::cos(t * 0.8f) + 0.6f * std::cos(t * 1.3f + 2.1f);
+    const float light_r = FluidOrbMix(1.0f, color_r, 0.5f);
+    const float light_g = FluidOrbMix(1.0f, color_g, 0.5f);
+    const float light_b = FluidOrbMix(1.0f, color_b, 0.5f);
+
+    // ponytail: sample a 100x100 grid and expand it to 2x2 pixels; full-resolution noise is
+    // needlessly expensive on the ESP32, and the display's 16-bit color already softens it.
+    for (int y = 0; y < size; y += kFluidOrbSampleStep) {
+        const float canvas_y = static_cast<float>(y) + 0.5f;
+        const float uv_y = 1.0f - canvas_y / static_cast<float>(size);
+        for (int x = 0; x < size; x += kFluidOrbSampleStep) {
+            const float uv_x = (static_cast<float>(x) + 0.5f) / static_cast<float>(size);
+            const float p_x = uv_x * 1.8f + drift_x * 0.7f;
+            const float p_y = uv_y + drift_y * 0.7f;
+            const float q_x = FluidOrbFbm(p_x + drift_x, p_y + drift_y);
+            const float q_y = FluidOrbFbm(p_x + 3.2f - drift_x, p_y + 1.5f - drift_y);
+            const float noise = FluidOrbFbm(p_x + 1.2f * q_x, p_y + 1.2f * q_y);
+            const float base = std::clamp(1.0f - uv_y, 0.0f, 1.0f);
+            const float anchor = FluidOrbSmoothStep(0.0f, 0.3f, uv_y);
+            const float shade = std::clamp(base + (noise - 0.5f) * 0.8f * anchor, 0.0f, 1.0f);
+
+            float red = FluidOrbMix(1.0f, light_r, FluidOrbSmoothStep(0.28f, 0.52f, shade));
+            float green = FluidOrbMix(1.0f, light_g, FluidOrbSmoothStep(0.28f, 0.52f, shade));
+            float blue = FluidOrbMix(1.0f, light_b, FluidOrbSmoothStep(0.28f, 0.52f, shade));
+            const float dark_mix = FluidOrbSmoothStep(0.58f, 0.88f, shade);
+            red = FluidOrbMix(red, color_r, dark_mix);
+            green = FluidOrbMix(green, color_g, dark_mix);
+            blue = FluidOrbMix(blue, color_b, dark_mix);
+
+            const float dx = uv_x - 0.5f;
+            const float dy = uv_y - 0.5f;
+            const float edge = FluidOrbSmoothStep(0.5f, 0.49f, std::sqrt(dx * dx + dy * dy));
+            lv_color16_t pixel{};
+            pixel.blue = static_cast<uint16_t>(
+                             std::clamp(blue * edge, 0.0f, 1.0f) * 255.0f) >> 3;
+            pixel.green = static_cast<uint16_t>(
+                              std::clamp(green * edge, 0.0f, 1.0f) * 255.0f) >> 2;
+            pixel.red = static_cast<uint16_t>(
+                            std::clamp(red * edge, 0.0f, 1.0f) * 255.0f) >> 3;
+
+            for (int block_y = 0; block_y < kFluidOrbSampleStep && y + block_y < size; ++block_y) {
+                for (int block_x = 0; block_x < kFluidOrbSampleStep && x + block_x < size;
+                     ++block_x) {
+                    voice_orb_buffer_[(y + block_y) * size + x + block_x] = pixel;
+                }
+            }
+        }
+    }
+    lv_obj_invalidate(voice_orb_canvas_);
+}
+#endif
+
 void LcdDisplay::SetEmotion(const char* emotion) {
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+    return;
+#endif
     if (!setup_ui_called_) {
         ESP_LOGW(TAG, "SetEmotion('%s') called before SetupUI() - emotion will not be displayed!",
                  emotion);
@@ -1197,6 +1748,9 @@ void LcdDisplay::SetTheme(Theme* theme) {
     auto text_font = lvgl_theme->text_font()->font();
     auto icon_font = lvgl_theme->icon_font()->font();
     auto large_icon_font = lvgl_theme->large_icon_font()->font();
+
+    if (voice_root_ != nullptr) lv_obj_set_style_text_font(voice_root_, text_font, 0);
+    if (watch_ui_ != nullptr) watch_ui_->SetFont(lvgl_theme->text_font());
 
     if (text_font->line_height >= 40) {
         lv_obj_set_style_text_font(mute_label_, large_icon_font, 0);
@@ -1325,6 +1879,12 @@ void LcdDisplay::SetTheme(Theme* theme) {
     // Update low battery popup
     lv_obj_set_style_bg_color(low_battery_popup_, lvgl_theme->low_battery_color(), 0);
 
+    lv_obj_set_style_bg_color(container_, lv_color_hex(0x0C1220), 0);
+    lv_obj_set_style_bg_image_src(container_, nullptr, 0);
+    lv_obj_set_style_text_color(voice_root_, lv_color_white(), 0);
+    lv_obj_set_style_text_color(status_label_, lv_color_white(), 0);
+    lv_obj_set_style_text_color(chat_message_label_, lv_color_white(), 0);
+    lv_obj_set_style_bg_opa(bottom_bar_, LV_OPA_TRANSP, 0);
     // No errors occurred. Save theme to settings
     Display::SetTheme(lvgl_theme);
 }
@@ -1347,3 +1907,78 @@ void LcdDisplay::SetHideSubtitle(bool hide) {
         }
     }
 }
+
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+void LcdDisplay::FeedTouch(bool pressed, int x, int y) {
+    touch_sample_.store((static_cast<uint32_t>(pressed) << 18) |
+                       (static_cast<uint32_t>(std::clamp(y, 0, 359)) << 9) |
+                       static_cast<uint32_t>(std::clamp(x, 0, 359)));
+}
+void LcdDisplay::ShowVoicePage() {
+    DisplayLockGuard lock(this);
+    if (watch_ui_) watch_ui_->Show(WatchUi::Page::Voice);
+}
+void LcdDisplay::UpdateWatchInfo(const WatchUi::Info& info) {
+    DisplayLockGuard lock(this);
+    if (watch_ui_) watch_ui_->SetInfo(info);
+}
+void LcdDisplay::UpdateStatusBar(bool update_all) {
+    LvglDisplay::UpdateStatusBar(update_all);
+    DisplayLockGuard lock(this);
+    time_t now = time(nullptr); struct tm tm{}; localtime_r(&now, &tm);
+    char clock[16] = "--:--", date[48] = "Waiting for network time";
+    if (tm.tm_year >= 124) { strftime(clock, sizeof(clock), "%H:%M", &tm); strftime(date, sizeof(date), "%a, %b %d", &tm); }
+    if (voice_clock_) lv_label_set_text(voice_clock_, clock);
+    if (watch_ui_) watch_ui_->Tick(clock, date);
+}
+void LcdDisplay::ShowConfirmScreen(const char* summary) {
+    DisplayLockGuard lock(this);
+    if (confirm_root_ == nullptr) {
+        confirm_root_ = lv_obj_create(lv_screen_active());
+        lv_obj_set_size(confirm_root_, 360, 360);
+        lv_obj_set_pos(confirm_root_, 0, 0);
+        lv_obj_set_style_bg_color(confirm_root_, lv_color_hex(0x000000), 0);
+        lv_obj_set_style_bg_opa(confirm_root_, LV_OPA_70, 0);
+        lv_obj_set_style_border_width(confirm_root_, 0, 0);
+        lv_obj_set_style_pad_all(confirm_root_, 0, 0);
+        lv_obj_remove_flag(confirm_root_, static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
+        confirm_summary_ = lv_label_create(confirm_root_);
+        lv_obj_set_size(confirm_summary_, confirm_geometry::kSummaryWidth, confirm_geometry::kSummaryHeight);
+        lv_label_set_long_mode(confirm_summary_, LV_LABEL_LONG_WRAP);
+        lv_obj_set_style_text_align(confirm_summary_, LV_TEXT_ALIGN_CENTER, 0);
+        lv_obj_set_style_text_color(confirm_summary_, lv_color_hex(confirm_geometry::kSummaryTextColor), 0);
+        lv_obj_set_pos(confirm_summary_, (360 - confirm_geometry::kSummaryWidth) / 2, confirm_geometry::kSummaryOffsetY);
+        confirm_reject_btn_ = lv_obj_create(confirm_root_);
+        lv_obj_set_size(confirm_reject_btn_, confirm_geometry::kButtonWidth, confirm_geometry::kButtonHeight);
+        lv_obj_set_pos(confirm_reject_btn_, confirm_geometry::kRejectButtonOffsetX, confirm_geometry::kButtonOffsetY);
+        lv_obj_set_style_radius(confirm_reject_btn_, 20, 0);
+        lv_obj_set_style_bg_color(confirm_reject_btn_, lv_color_hex(confirm_geometry::kRejectBackgroundColor), 0);
+        lv_obj_set_style_border_width(confirm_reject_btn_, 0, 0);
+        lv_obj_remove_flag(confirm_reject_btn_, LV_OBJ_FLAG_CLICKABLE);
+        auto reject_label = lv_label_create(confirm_reject_btn_);
+        lv_label_set_text(reject_label, "Reject");
+        lv_obj_set_style_text_color(reject_label, lv_color_hex(confirm_geometry::kButtonTextColor), 0);
+        lv_obj_center(reject_label);
+        confirm_approve_btn_ = lv_obj_create(confirm_root_);
+        lv_obj_set_size(confirm_approve_btn_, confirm_geometry::kButtonWidth, confirm_geometry::kButtonHeight);
+        lv_obj_set_pos(confirm_approve_btn_, confirm_geometry::kApproveButtonOffsetX, confirm_geometry::kButtonOffsetY);
+        lv_obj_set_style_radius(confirm_approve_btn_, 20, 0);
+        lv_obj_set_style_bg_color(confirm_approve_btn_, lv_color_hex(confirm_geometry::kApproveBackgroundColor), 0);
+        lv_obj_set_style_border_width(confirm_approve_btn_, 0, 0);
+        lv_obj_remove_flag(confirm_approve_btn_, LV_OBJ_FLAG_CLICKABLE);
+        auto approve_label = lv_label_create(confirm_approve_btn_);
+        lv_label_set_text(approve_label, "Approve");
+        lv_obj_set_style_text_color(approve_label, lv_color_hex(confirm_geometry::kButtonTextColor), 0);
+        lv_obj_center(approve_label);
+    }
+    lv_label_set_text(confirm_summary_, summary ? summary : "");
+    lv_obj_remove_flag(confirm_root_, LV_OBJ_FLAG_HIDDEN);
+    lv_obj_move_foreground(confirm_root_);
+}
+void LcdDisplay::HideConfirmScreen() {
+    DisplayLockGuard lock(this);
+    if (confirm_root_ != nullptr) {
+        lv_obj_add_flag(confirm_root_, LV_OBJ_FLAG_HIDDEN);
+    }
+}
+#endif

@@ -2,6 +2,7 @@ tmp/
 components/
 managed_components/
 build/
+build-codex-voice-check/
 dist/
 .vscode/
 .devcontainer/
@@ -21,3 +22,6 @@ mmap_generate_*.h
 
 # Machine-local build config (may contain secrets)
 sdkconfig.defaults.local
+
+# Local device diagnostics can contain conversation text.
+/log.xiaozhi.*.txt

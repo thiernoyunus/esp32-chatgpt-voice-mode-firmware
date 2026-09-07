@@ -11,3 +11,7 @@ idf_build_set_property(MINIMAL_BUILD ON)
 
 set(PROJECT_VER "2.7.3")
 project(xiaozhi)
+
+if(NOT CONFIG_APOLLO_CODEX_VOICE OR NOT CONFIG_USE_DEFAULT_MESSAGE_STYLE)
+    message(FATAL_ERROR "This workspace builds only Codex Voice with the orb. Use the separate backup for Classic firmware.")
+endif()

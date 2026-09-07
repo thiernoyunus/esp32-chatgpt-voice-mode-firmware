@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstring>
 #include <memory>
+#include <mutex>
 #include <unordered_map>
 #include <tuple>
 #include <algorithm>
@@ -16,6 +17,7 @@
 
 // ESP-IDF headers
 #include <esp_log.h>
+#include <esp_heap_caps.h>
 #include <esp_lcd_panel_io.h>
 #include <esp_timer.h>
 #include <lvgl.h>
@@ -31,6 +33,7 @@
 #include "confirm_geometry.h"
 #include "gfx.h"
 #include "expression_emote.h"
+#include "jpg/image_to_jpeg.h"
 
 
 namespace emote {
@@ -72,6 +75,8 @@ static std::atomic<uint16_t> s_accent_ring_color{0xFFFF};
 static std::atomic<bool> s_accent_ring_visible{true};
 static int s_display_width = 0;
 static int s_display_height = 0;
+static uint16_t* s_framebuffer = nullptr;
+static std::mutex s_framebuffer_mutex;
 constexpr float kAccentRingThickness = 8.0f;
 
 // Countdown window for the draining-arc mode of the ring (epoch ms; an end of
@@ -163,6 +168,16 @@ static void OnFlushCallback(int x_start, int y_start, int x_end, int y_end, cons
     if (panel != nullptr) {
         OverlayAccentRing(x_start, y_start, x_end, y_end,
                           const_cast<uint16_t*>(static_cast<const uint16_t*>(data)));
+        if (s_framebuffer != nullptr) {
+            const int stride = x_end - x_start;
+            const auto* source = static_cast<const uint16_t*>(data);
+            std::lock_guard<std::mutex> lock(s_framebuffer_mutex);
+            for (int y = y_start; y < y_end; ++y) {
+                std::memcpy(s_framebuffer + (size_t)y * s_display_width + x_start,
+                            source + (size_t)(y - y_start) * stride,
+                            (size_t)stride * sizeof(uint16_t));
+            }
+        }
         esp_lcd_panel_draw_bitmap(panel, x_start, y_start, x_end, y_end, data);
     }
 }
@@ -220,6 +235,13 @@ EmoteDisplay::EmoteDisplay(const esp_lcd_panel_handle_t panel, const esp_lcd_pan
 {
     s_display_width = width;
     s_display_height = height;
+    const size_t framebuffer_bytes = (size_t)width * height * sizeof(uint16_t);
+    s_framebuffer = static_cast<uint16_t*>(heap_caps_calloc(
+        (size_t)width * height, sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (s_framebuffer == nullptr) {
+        ESP_LOGE(TAG, "Failed to allocate screen capture buffer (%u bytes)",
+                 (unsigned)framebuffer_bytes);
+    }
     emote_handle_ = InitializeEmote(panel, width, height);
 
     const esp_lcd_panel_io_callbacks_t cbs = {
@@ -238,6 +260,11 @@ EmoteDisplay::~EmoteDisplay()
     if (emote_handle_) {
         emote_deinit(emote_handle_);
         emote_handle_ = nullptr;
+    }
+    std::lock_guard<std::mutex> lock(s_framebuffer_mutex);
+    if (s_framebuffer != nullptr) {
+        heap_caps_free(s_framebuffer);
+        s_framebuffer = nullptr;
     }
 }
 
@@ -509,6 +536,45 @@ void EmoteDisplay::SetPreviewImage(const void* image)
     if (image) {
         ESP_LOGI(TAG, "SetPreviewImage: Preview image not supported, using default icon");
     }
+}
+
+bool EmoteDisplay::SnapshotToJpeg(std::string& jpeg_data, int quality)
+{
+    if (s_framebuffer == nullptr || s_display_width <= 0 || s_display_height <= 0) {
+        return false;
+    }
+
+    RefreshAll();
+    vTaskDelay(pdMS_TO_TICKS(100));
+
+    const size_t pixel_count = (size_t)s_display_width * s_display_height;
+    auto* snapshot = static_cast<uint16_t*>(heap_caps_malloc(
+        pixel_count * sizeof(uint16_t), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT));
+    if (snapshot == nullptr) {
+        return false;
+    }
+    {
+        std::lock_guard<std::mutex> lock(s_framebuffer_mutex);
+        std::memcpy(snapshot, s_framebuffer, pixel_count * sizeof(uint16_t));
+    }
+    for (size_t i = 0; i < pixel_count; ++i) {
+        snapshot[i] = __builtin_bswap16(snapshot[i]);
+    }
+
+    jpeg_data.clear();
+    const bool result = image_to_jpeg_cb(
+        reinterpret_cast<uint8_t*>(snapshot), pixel_count * sizeof(uint16_t),
+        s_display_width, s_display_height, V4L2_PIX_FMT_RGB565, quality,
+        [](void* arg, size_t, const void* data, size_t len) -> size_t {
+            auto* output = static_cast<std::string*>(arg);
+            if (data != nullptr && len > 0) {
+                output->append(static_cast<const char*>(data), len);
+            }
+            return len;
+        },
+        &jpeg_data);
+    heap_caps_free(snapshot);
+    return result;
 }
 
 void EmoteDisplay::SetTheme(Theme* const theme)

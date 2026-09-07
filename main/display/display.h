@@ -60,6 +60,19 @@ public:
     // Default is a no-op for displays that cannot draw touch targets.
     virtual void ShowConfirmScreen(const char* summary) { (void)summary; }
     virtual void HideConfirmScreen() {}
+    virtual void SetVoiceMicrophoneMuted(bool muted) { (void)muted; }
+    virtual void SetVoiceActivity(const char* activity, const char* icon = "none",
+                                  const char* pixels = nullptr) { (void)activity; (void)icon; (void)pixels; }
+    virtual void SetVoiceModel(const char* name) { (void)name; }
+    virtual void ShowVoiceModels(const std::vector<std::string>& names, size_t page) { (void)names; (void)page; }
+    virtual void HideVoiceModels() {}
+    virtual void FeedTouch(bool pressed, int x, int y) { (void)pressed; (void)x; (void)y; }
+    virtual void ShowVoicePage() {}
+    virtual bool SnapshotToJpeg(std::string& jpeg_data, int quality = 80) {
+        (void)jpeg_data;
+        (void)quality;
+        return false;
+    }
     virtual void SetEmojiCollection(std::shared_ptr<EmojiCollection>) {}
     virtual void SetupUI() { setup_ui_called_ = true; }
 

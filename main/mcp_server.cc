@@ -169,16 +169,30 @@ void McpServer::AddUserOnlyTools() {
         });
 
     // Display control
+    auto display = Board::GetInstance().GetDisplay();
+    AddUserOnlyTool("self.screen.capture", "Capture the current screen and return it as a JPEG image",
+        PropertyList({
+            Property("quality", kPropertyTypeInteger, 80, 1, 100)
+        }),
+        [display](const PropertyList& properties) -> ReturnValue {
+            auto quality = properties["quality"].value<int>();
+            std::string jpeg_data;
+            if (!display->SnapshotToJpeg(jpeg_data, quality)) {
+                throw std::runtime_error("Failed to capture screen");
+            }
+            return new ImageContent("image/jpeg", jpeg_data);
+        });
+
 #ifdef HAVE_LVGL
-    auto display = dynamic_cast<LvglDisplay*>(Board::GetInstance().GetDisplay());
-    if (display) {
+    auto lvgl_display = dynamic_cast<LvglDisplay*>(display);
+    if (lvgl_display) {
         AddUserOnlyTool("self.screen.get_info", "Information about the screen, including width, height, etc.",
             PropertyList(),
-            [display](const PropertyList& properties) -> ReturnValue {
+            [lvgl_display](const PropertyList& properties) -> ReturnValue {
                 cJSON *json = cJSON_CreateObject();
-                cJSON_AddNumberToObject(json, "width", display->width());
-                cJSON_AddNumberToObject(json, "height", display->height());
-                if (dynamic_cast<OledDisplay*>(display)) {
+                cJSON_AddNumberToObject(json, "width", lvgl_display->width());
+                cJSON_AddNumberToObject(json, "height", lvgl_display->height());
+                if (dynamic_cast<OledDisplay*>(lvgl_display)) {
                     cJSON_AddBoolToObject(json, "monochrome", true);
                 } else {
                     cJSON_AddBoolToObject(json, "monochrome", false);
@@ -192,12 +206,12 @@ void McpServer::AddUserOnlyTools() {
                 Property("url", kPropertyTypeString),
                 Property("quality", kPropertyTypeInteger, 80, 1, 100)
             }),
-            [display](const PropertyList& properties) -> ReturnValue {
+            [lvgl_display](const PropertyList& properties) -> ReturnValue {
                 auto url = properties["url"].value<std::string>();
                 auto quality = properties["quality"].value<int>();
 
                 std::string jpeg_data;
-                if (!display->SnapshotToJpeg(jpeg_data, quality)) {
+                if (!lvgl_display->SnapshotToJpeg(jpeg_data, quality)) {
                     throw std::runtime_error("Failed to snapshot screen");
                 }
 
@@ -240,12 +254,12 @@ void McpServer::AddUserOnlyTools() {
                 ESP_LOGI(TAG, "Snapshot screen result: %s", result.c_str());
                 return true;
             });
-        
+
         AddUserOnlyTool("self.screen.preview_image", "Preview an image on the screen",
             PropertyList({
                 Property("url", kPropertyTypeString)
             }),
-            [display](const PropertyList& properties) -> ReturnValue {
+            [lvgl_display](const PropertyList& properties) -> ReturnValue {
                 auto url = properties["url"].value<std::string>();
                 auto http = Board::GetInstance().GetNetwork()->CreateHttp(3);
 
@@ -277,7 +291,7 @@ void McpServer::AddUserOnlyTools() {
                 http->Close();
 
                 auto image = std::make_unique<LvglAllocatedImage>(data, content_length);
-                display->SetPreviewImage(std::move(image));
+                lvgl_display->SetPreviewImage(std::move(image));
                 return true;
             });
 #endif // CONFIG_LV_USE_SNAPSHOT
