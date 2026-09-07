@@ -4,6 +4,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdio>
+#include <cstring>
 #include <utility>
 
 namespace {
@@ -264,7 +265,28 @@ void WatchUi::Show(Page page) {
         Header("ChatGPT",Page::Voice);Column();
         Row("Chat",info_.temporary_chat?"Temporary":info_.chat.c_str(),&watch_icons::more,[this]{Show(Page::Chats);Emit(Action::Models);});
         Row("Model",info_.model.c_str(),&watch_icons::more,[this]{model_return_=Page::CodexSettings;Show(Page::Models);Emit(Action::Models);});
+        Row("Voice",info_.voice.empty()?"Default":info_.voice.c_str(),&watch_icons::mic,[this]{Show(Page::Voices);});
         Row("Reasoning",info_.reasoning.c_str(),&watch_icons::more,[this]{Show(Page::Reasoning);});break;
+    case Page::Voices: {
+        Header("Voice",Page::CodexSettings);Column();
+        // Names come from the app-server's v1 realtime voice set, which is what
+        // a v3 ChatGPT Voice call accepts. "Default" clears the saved choice.
+        const char* voices[]={"Default","Cove","Juniper","Maple","Spruce","Ember",
+                              "Vale","Breeze","Arbor","Sol"};
+        for(const auto& voice:voices){
+            const bool current=info_.voice.empty()?strcmp(voice,"Default")==0:info_.voice==voice;
+            Row(voice,current?"On":nullptr,nullptr,[this,voice]{
+                info_.voice=strcmp(voice,"Default")==0?std::string():voice;
+                Emit(Action::SelectVoice,0,info_.voice);
+                Show(Page::CodexSettings);
+            });
+            if(current){
+                auto top=lv_obj_get_child(column_,lv_obj_get_child_cnt(column_)-1);
+                lv_obj_set_style_bg_color(top,lv_color_hex(0x232C3A),0);
+            }
+        }
+        break;
+    }
     case Page::Chats: {
         Header("Chat",Page::CodexSettings);Column();
         // Temporary chats stay out of Codex, so the picker is pointless then.

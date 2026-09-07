@@ -344,6 +344,11 @@ bool CodexVoiceProtocol::SendSignalOffer(const uint8_t* data, size_t size) {
     if (temporary) {
         cJSON_AddBoolToObject(root, "temporary", true);
     }
+    // Saved spoken voice for this call; absent means the ChatGPT default.
+    const auto voice = settings.GetString("voice", "");
+    if (!voice.empty()) {
+        cJSON_AddStringToObject(root, "voice", voice.c_str());
+    }
     cJSON_AddNumberToObject(root, "ts", NowMilliseconds());
     char* json = cJSON_PrintUnformatted(root);
     const bool sent = json != nullptr && SendText(json);

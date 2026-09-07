@@ -1882,6 +1882,7 @@ void Application::RefreshWatchInfo() {
     {
         Settings settings("codex_voice", false);
         info.temporary_chat = settings.GetBool("temporary", false);
+        info.voice = settings.GetString("voice", "");
     }
     {
         Settings codex("codex", false);
@@ -1969,6 +1970,13 @@ void Application::OnWatchAction(WatchUi::Action action, int value,
                 Settings s("codex", true);
                 s.SetString("reasoning", text);
                 pending_watch_notification_ = "Reasoning saved for next call";
+                break;
+            }
+            case WatchUi::Action::SelectVoice: {
+                Settings s("codex_voice", true);
+                s.SetString("voice", text);
+                pending_watch_notification_ =
+                    text.empty() ? "Default voice for next call" : "Voice saved for next call";
                 break;
             }
             case WatchUi::Action::Sleep:
