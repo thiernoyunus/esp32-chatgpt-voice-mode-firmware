@@ -2,6 +2,7 @@
 """Build and run the real LVGL WatchUi host harness, then check fresh PNGs."""
 
 import os
+import sys
 import subprocess
 from pathlib import Path
 
@@ -14,7 +15,15 @@ BUILD = Path(
     os.environ.get("APOLLO_WATCH_UI_BUILD", "/tmp/apollo-watch-ui-host-owned/build")
 )
 OUTPUT = Path("/tmp")
-CHECK_ROUND = Path("/Users/thiernodiallo/Coding/tools/lvgl-mcp/check_round.py")
+# The LVGL simulator lives outside this repo, so both it and its round-boundary
+# checker have to be pointed at. Skip rather than fail: this harness is a local
+# rendering aid, not part of the build.
+SIM_DIR = Path(os.environ.get("APOLLO_LVGL_SIM_DIR", ""))
+CHECK_ROUND = SIM_DIR.parent / "check_round.py" if SIM_DIR.name else Path()
+if not SIM_DIR.is_dir() or not CHECK_ROUND.is_file():
+    print("SKIP: set APOLLO_LVGL_SIM_DIR to an LVGL simulator checkout "
+          "(expects ../check_round.py beside it)")
+    sys.exit(0)
 EXPECTED_TAGS = {
     "home",
     "settings",

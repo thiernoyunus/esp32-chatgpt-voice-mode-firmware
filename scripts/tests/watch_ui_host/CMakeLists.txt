@@ -6,8 +6,16 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD 99)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
-set(SIM_DIR "/Users/thiernodiallo/Coding/tools/lvgl-mcp/simulator")
-set(FW_DIR "/Users/thiernodiallo/Coding/Hardware/apollo-firmware")
+# The firmware root is three levels up from scripts/tests/watch_ui_host.
+get_filename_component(FW_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
+
+# The LVGL simulator is an external checkout, so it has to be pointed at.
+set(SIM_DIR "$ENV{APOLLO_LVGL_SIM_DIR}" CACHE PATH "LVGL simulator checkout")
+if(NOT SIM_DIR OR NOT EXISTS "${SIM_DIR}/lv_conf.h")
+    message(FATAL_ERROR
+        "Set APOLLO_LVGL_SIM_DIR (or -DSIM_DIR=) to an LVGL simulator checkout "
+        "containing lv_conf.h. Got: '${SIM_DIR}'")
+endif()
 
 set(LV_BUILD_CONF_PATH "${SIM_DIR}/lv_conf.h" CACHE PATH "Path to lv_conf.h" FORCE)
 set(CONFIG_LV_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
