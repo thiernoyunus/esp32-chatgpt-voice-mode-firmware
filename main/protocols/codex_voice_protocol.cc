@@ -99,44 +99,35 @@ CodexVoiceProtocol::~CodexVoiceProtocol() {
     }
 }
 
-bool CodexVoiceProtocol::Start() { return true; }
-
-bool CodexVoiceProtocol::SendText(const std::string& text) {
-    return websocket_ != nullptr && websocket_->IsConnected() && websocket_->Send(text);
+bool CodexVoiceProtocol::Start() {
+    // Keep the MCP control path available while idle. WebRTC is opened only
+    // when the user starts a voice call.
+    closing_ = true;
+    error_occurred_ = false;
+    return OpenControlChannel();
 }
 
-bool CodexVoiceProtocol::OpenAudioChannel() {
-    if (IsAudioChannelOpened()) {
+bool CodexVoiceProtocol::OpenControlChannel() {
+    if (websocket_ != nullptr && websocket_->IsConnected()) {
         return true;
     }
-    CloseAudioChannel(false);
+    websocket_.reset();
 
     Settings settings("apollo", false);
-    std::string base_url = settings.GetString("url", CONFIG_APOLLO_URL);
-    std::string token = settings.GetString("token", CONFIG_APOLLO_TOKEN);
+    const std::string base_url = settings.GetString("url", CONFIG_APOLLO_URL);
+    const std::string token = settings.GetString("token", CONFIG_APOLLO_TOKEN);
     std::string device_id = settings.GetString("device_id", CONFIG_APOLLO_DEVICE_ID);
     if (base_url.empty()) {
-        SetError(Lang::Strings::SERVER_NOT_FOUND);
+        ESP_LOGE(TAG, "Apollo URL is not configured");
         return false;
     }
     if (device_id.empty()) {
         device_id = SystemInfo::GetMacAddress();
     }
 
-    error_occurred_ = false;
-    closing_ = false;
-    speaking_ = false;
-    uplink_pts_ms_ = 0;
-    last_audio_frame_ms_.store(0);
-    speech_expected_since_ms_.store(0);
-    server_sample_rate_ = 16000;
-    server_frame_duration_ = 20;
-    request_id_ = std::to_string(esp_random()) + "-" + std::to_string(NowMilliseconds());
-    xEventGroupClearBits(peer_events_, kVoiceReadyBit | kVoiceFailedBit | kPeerStoppedBit);
-
     websocket_ = Board::GetInstance().GetNetwork()->CreateWebSocket(1);
     if (websocket_ == nullptr) {
-        SetError(Lang::Strings::SERVER_NOT_CONNECTED);
+        ESP_LOGE(TAG, "Could not create Apollo control channel");
         return false;
     }
     websocket_->OnData([this](const char* data, size_t size, bool binary) {
@@ -152,8 +143,8 @@ bool CodexVoiceProtocol::OpenAudioChannel() {
         }
     });
     if (!websocket_->Connect(BuildConnectionUrl(base_url, device_id, token).c_str())) {
-        SetError(Lang::Strings::SERVER_NOT_CONNECTED);
-        CloseAudioChannel(false);
+        ESP_LOGE(TAG, "Could not connect to Apollo control channel");
+        websocket_.reset();
         return false;
     }
 
@@ -166,6 +157,54 @@ bool CodexVoiceProtocol::OpenAudioChannel() {
     cJSON_free(hello_json);
     cJSON_Delete(hello);
     if (!hello_sent) {
+        ESP_LOGE(TAG, "Could not identify Apollo control channel");
+        websocket_.reset();
+        return false;
+    }
+    ESP_LOGI(TAG, "Apollo control channel ready");
+    return true;
+}
+
+bool CodexVoiceProtocol::SendText(const std::string& text) {
+    return websocket_ != nullptr && websocket_->IsConnected() && websocket_->Send(text);
+}
+
+void CodexVoiceProtocol::SendMcpMessage(const std::string& payload) {
+    cJSON* payload_json = cJSON_Parse(payload.c_str());
+    if (payload_json == nullptr) {
+        ESP_LOGE(TAG, "Dropping unparseable MCP payload");
+        return;
+    }
+    cJSON* root = cJSON_CreateObject();
+    cJSON_AddStringToObject(root, "type", "mcp");
+    cJSON_AddItemToObject(root, "payload", payload_json);
+    cJSON_AddNumberToObject(root, "ts", NowMilliseconds());
+    char* serialized = cJSON_PrintUnformatted(root);
+    if (serialized != nullptr && !SendText(serialized)) {
+        ESP_LOGW(TAG, "MCP response dropped: Apollo control channel is offline");
+    }
+    cJSON_free(serialized);
+    cJSON_Delete(root);
+}
+
+bool CodexVoiceProtocol::OpenAudioChannel() {
+    if (IsAudioChannelOpened()) {
+        return true;
+    }
+    CloseAudioChannel(false);
+
+    error_occurred_ = false;
+    closing_ = false;
+    speaking_ = false;
+    uplink_pts_ms_ = 0;
+    last_audio_frame_ms_.store(0);
+    speech_expected_since_ms_.store(0);
+    server_sample_rate_ = 16000;
+    server_frame_duration_ = 20;
+    request_id_ = std::to_string(esp_random()) + "-" + std::to_string(NowMilliseconds());
+    xEventGroupClearBits(peer_events_, kVoiceReadyBit | kVoiceFailedBit | kPeerStoppedBit);
+
+    if (!OpenControlChannel()) {
         SetError(Lang::Strings::SERVER_NOT_CONNECTED);
         CloseAudioChannel(false);
         return false;
@@ -249,7 +288,7 @@ bool CodexVoiceProtocol::OpenAudioChannel() {
 }
 
 void CodexVoiceProtocol::CloseAudioChannel(bool send_goodbye) {
-    const bool was_running = peer_ != nullptr || websocket_ != nullptr;
+    const bool was_running = peer_ != nullptr || peer_running_.load() || !request_id_.empty();
     closing_ = true;
     channel_open_ = false;
     speaking_ = false;
@@ -276,7 +315,6 @@ void CodexVoiceProtocol::CloseAudioChannel(bool send_goodbye) {
         esp_peer_close(peer_);
         peer_ = nullptr;
     }
-    websocket_.reset();
     request_id_.clear();
     if (was_running && on_audio_channel_closed_ != nullptr) {
         on_audio_channel_closed_();

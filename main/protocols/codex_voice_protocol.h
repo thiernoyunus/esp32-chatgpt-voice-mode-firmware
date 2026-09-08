@@ -29,6 +29,7 @@ public:
     ~CodexVoiceProtocol() override;
 
     bool Start() override;
+    void SendMcpMessage(const std::string& payload) override;
     bool OpenAudioChannel() override;
     void CloseAudioChannel(bool send_goodbye = true) override;
     bool IsAudioChannelOpened() const override;
@@ -53,6 +54,7 @@ private:
     std::string request_id_;
     uint32_t uplink_pts_ms_ = 0;
 
+    bool OpenControlChannel();
     bool SendText(const std::string& text) override;
     bool SendSignalOffer(const uint8_t* data, size_t size);
     void HandleSignal(const char* data, size_t size);

@@ -323,12 +323,9 @@ bool LvglDisplay::SnapshotToJpeg(std::string& jpeg_data, int quality) {
         return false;
     }
 
-    // swap bytes
-    uint16_t* data = (uint16_t*)draw_buffer->data;
-    size_t pixel_count = draw_buffer->data_size / 2;
-    for (size_t i = 0; i < pixel_count; i++) {
-        data[i] = __builtin_bswap16(data[i]);
-    }
+    // lv_snapshot_take returns the native little-endian RGB565 layout used by
+    // this ESP32 build. The JPEG encoder's V4L2_PIX_FMT_RGB565 input expects
+    // that same layout, so swapping the bytes here would corrupt the colors.
 
     // Clear output string and use callback version to avoid pre-allocating large memory blocks
     jpeg_data.clear();
