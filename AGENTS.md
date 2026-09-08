@@ -19,8 +19,10 @@ LcdDisplay::RenderVoiceOrb and CodexVoiceProtocol, not EmoteDisplay.
 - `main/boards/common/`: board interfaces and the hardware helpers the 1.85C uses.
 - `main/boards/waveshare/esp32-s3-touch-lcd-1.85c/`: pins, panel, touch task, board assets.
 - `main/audio/`: audio service, codecs, wake word (runs on the raw mic here), queues.
-- `main/protocols/apollo_protocol.*`: the only protocol. The server contract lives in the main repo.
-- `main/display/emote_display.*`: emote-engine face and accent ring.
+- `main/protocols/codex_voice_protocol.*`: the realtime WebRTC voice client this workspace builds.
+- `main/protocols/apollo_protocol.*`: the Classic request/response protocol, kept for the backup build only.
+- `main/display/lcd_display.*` and `main/display/watch_ui.*`: the round watch UI and voice orb.
+- `main/display/emote_display.*`: Classic emote face; not built here.
 - `main/mcp_server.*`: device-side MCP tools and dispatch (not yet wired to Apollo).
 - `main/Kconfig.projbuild` / `main/CMakeLists.txt`: trimmed to the single board and es-ES/en-US.
 - `scripts/build.py`: canonical build entry point.

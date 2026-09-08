@@ -63,9 +63,12 @@ struct Board {
     static Board& GetInstance() { static Board board; return board; }
     Display* GetDisplay() { return &display; }
 };
+enum { kDeviceStateIdle = 0 };
 struct Protocol {
     bool opened = true;
     bool IsAudioChannelOpened() { return opened; }
+    void CloseAudioChannel() { opened = false; ++closes; }
+    int closes = 0;
 };
 struct CodexVoiceProtocol : Protocol {
     struct Choice { std::string name; };
@@ -80,11 +83,14 @@ struct Application {
     std::unique_ptr<CodexVoiceProtocol> protocol_ = std::make_unique<CodexVoiceProtocol>();
     bool voice_model_picker_open_ = false;
     size_t voice_model_page_ = 0;
+    std::atomic<bool> call_end_requested_{false};
+    int state_ = 0;
     AudioService audio_service_;
     template<class F> void Schedule(F function) { function(); }
     void NoteUserActivity() { is_screen_asleep_ = false; }
     bool IsConfirmActive() { return confirm; }
     void HandleToggleChatEvent() { ++toggles; }
+    void SetDeviceState(int state) { state_ = state; }
     void OnVoiceTouchRelease(int x, int y);
 };
 TOUCH
@@ -119,10 +125,15 @@ int main() {
     app.OnVoiceTouchRelease(88, 272);
     assert(!app.audio_service_.IsMicrophoneMuted());
     app.OnVoiceTouchRelease(272, 272);
-    assert(app.toggles == 1);
+    // End closes the call itself; it must not route through the toggle path,
+    // which only aborts speech and would leave the channel open.
+    assert(app.toggles == 0);
+    assert(app.protocol_->closes == 1 && !app.protocol_->opened);
+    assert(app.call_end_requested_.load());
     app.is_screen_asleep_ = true;
     app.OnVoiceTouchRelease(272, 272);
-    assert(app.toggles == 1);
+    assert(app.protocol_->closes == 1);
+    app.protocol_->opened = true;
     app.confirm = true;
     app.OnVoiceTouchRelease(88, 272);
     assert(!app.audio_service_.IsMicrophoneMuted());
@@ -131,19 +142,20 @@ int main() {
     // Mute/end do not fire while idle, so the mic and toggles move together.
     app.protocol_->opened = false;
     app.OnVoiceTouchRelease(88, 272);
-    assert(!app.audio_service_.IsMicrophoneMuted() && app.toggles == 2);
+    assert(!app.audio_service_.IsMicrophoneMuted() && app.toggles == 1);
     app.OnVoiceTouchRelease(180, 180);
-    assert(app.toggles == 3);
+    assert(app.toggles == 2);
     // Back on the call: mute/end respond again, tapping outside the buttons
     // is a no-op (no model picker was ever installed at 180,40).
     app.protocol_->opened = true;
     app.OnVoiceTouchRelease(88, 272);
     assert(app.audio_service_.IsMicrophoneMuted());
-    assert(app.toggles == 3);
+    assert(app.toggles == 2);
     app.OnVoiceTouchRelease(272, 272);
-    assert(app.toggles == 4);
+    assert(app.toggles == 2 && app.protocol_->closes == 2);
+    app.protocol_->opened = true;
     app.OnVoiceTouchRelease(180, 40);
-    assert(app.toggles == 4);
+    assert(app.toggles == 2);
     assert(!app.voice_model_picker_open_);
 }
 '''.replace("MUTE", mute).replace("GUARD", guard).replace("TOUCH", touch)

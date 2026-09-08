@@ -1213,7 +1213,12 @@ void Application::OnVoiceTouchRelease(int x, int y) {
             audio_service_.SetMicrophoneMuted(muted);
             Board::GetInstance().GetDisplay()->SetVoiceMicrophoneMuted(muted);
         } else if (voice_geometry::ContainsButton(voice_geometry::kEndLeft, x, y)) {
-            HandleToggleChatEvent();
+            // End means end. HandleToggleChatEvent only aborts speech while
+            // Speaking, which left the channel open. Same steps as
+            // WatchUi::Action::EndCall.
+            call_end_requested_.store(true);
+            protocol_->CloseAudioChannel();
+            SetDeviceState(kDeviceStateIdle);
         }
     });
 }
