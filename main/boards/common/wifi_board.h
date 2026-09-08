@@ -49,7 +49,6 @@ protected:
     // this separate generation to recover the exact selected SSID.
     struct RawConnection {
         std::string ssid;
-        std::string password;
         bool active = false;
         bool connected = false;
         bool reconnect_pending = false;
@@ -118,6 +117,9 @@ public:
     // not immediately replaced by the strongest other saved AP. The raw
     // connection handler keeps that exact AP alive across transient drops.
     bool IsWifiConnected() const override;
+    // Returned by GetWifiRssi when no AP is associated. Well below any real
+    // reading, so signal classifiers land on the weakest bucket.
+    static constexpr int kRssiUnavailable = -127;
     int GetWifiRssi() const override;
     void SetWifiPowerSave(PowerSaveLevel level) override;
 

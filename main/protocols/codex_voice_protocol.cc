@@ -699,7 +699,11 @@ int CodexVoiceProtocol::OnPeerAudio(esp_peer_audio_frame_t* frame, void* context
                  (unsigned long)received_frames, (int)frame->size,
                  protocol->server_sample_rate_, protocol->IsAudioChannelOpened());
     }
-    auto* packet = new AudioStreamPacket();
+    // Schedule stores callbacks in a deque that can be dropped without running
+    // (ResetProtocol, shutdown). A raw pointer captured there would have no
+    // owner, so the packet and its payload would leak. shared_ptr is needed
+    // because Schedule takes a copyable std::function.
+    auto packet = std::make_shared<AudioStreamPacket>();
     packet->sample_rate = protocol->server_sample_rate_;
     packet->frame_duration = OpusPacketDurationMs(frame->data, frame->size);
     packet->timestamp = frame->pts;
@@ -707,7 +711,7 @@ int CodexVoiceProtocol::OnPeerAudio(esp_peer_audio_frame_t* frame, void* context
     packet->pcm = false;
     auto callback = protocol->on_incoming_audio_;
     Application::GetInstance().Schedule([callback, packet]() {
-        callback(std::unique_ptr<AudioStreamPacket>(packet));
+        callback(std::make_unique<AudioStreamPacket>(std::move(*packet)));
     });
     return 0;
 }

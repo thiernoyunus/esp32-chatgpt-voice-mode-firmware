@@ -546,7 +546,9 @@ int WifiBoard::GetWifiRssi() const {
     if (esp_wifi_sta_get_ap_info(&ap_info) == ESP_OK) {
         return ap_info.rssi;
     }
-    return 0;
+    // 0 dBm would read as a perfect signal. Real RSSI is negative, so this
+    // sentinel is unambiguous and every consumer classifies it as "weak".
+    return kRssiUnavailable;
 }
 
 void WifiBoard::SetWifiPowerSave(PowerSaveLevel level) {
@@ -924,7 +926,6 @@ void WifiBoard::ScheduleOutcome(uint32_t generation, bool commit,
                     std::lock_guard<std::mutex> raw_lock(raw_connection_mutex_);
                     raw_connection_generation_.fetch_add(1);
                     raw_connection_.ssid = ssid;
-                    raw_connection_.password = password;
                     raw_connection_.active = true;
                     raw_connection_.connected = true;
                     raw_connection_.reconnect_pending = false;
