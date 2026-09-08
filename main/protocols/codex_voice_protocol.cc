@@ -33,6 +33,8 @@ uint32_t NowMilliseconds() { return static_cast<uint32_t>(esp_timer_get_time() /
 // that the user does not sit through a whole silent answer.
 // ponytail: fixed threshold; revisit only if healthy calls trip it.
 constexpr uint32_t kInboundAudioStallMs = 4000;
+constexpr uint32_t kAudioLogBurstGapMs = 250;
+constexpr size_t kMinimumVoiceAudioBytes = 4;
 
 std::string BuildConnectionUrl(const std::string& base_url, const std::string& device_id,
                                const std::string& token) {
@@ -727,16 +729,28 @@ int CodexVoiceProtocol::OnPeerAudio(esp_peer_audio_frame_t* frame, void* context
         return 0;
     }
     static uint32_t received_frames = 0;
+    static uint32_t real_audio_frames = 0;
     static uint32_t last_audio_log = 0;
+    static bool previous_frame_was_real_audio = false;
+    const uint32_t now = NowMilliseconds();
+    const uint32_t previous_audio_frame_ms = protocol->last_audio_frame_ms_.load();
+    const bool is_real_audio = frame->size >= kMinimumVoiceAudioBytes;
+    const bool new_audio_burst = is_real_audio && !previous_frame_was_real_audio;
     ++received_frames;
-    protocol->last_audio_frame_ms_.store(NowMilliseconds());
+    if (is_real_audio) {
+        ++real_audio_frames;
+    }
+    protocol->last_audio_frame_ms_.store(now);
     protocol->speech_expected_since_ms_.store(0);
-    if (NowMilliseconds() - last_audio_log >= 1000) {
-        last_audio_log = NowMilliseconds();
-        ESP_LOGI(TAG, "[DEBUG-audio] received=%lu bytes=%d rate=%d open=%d",
-                 (unsigned long)received_frames, (int)frame->size,
+    if (now - last_audio_log >= 1000 || new_audio_burst ||
+        (is_real_audio && now - previous_audio_frame_ms >= kAudioLogBurstGapMs)) {
+        last_audio_log = now;
+        ESP_LOGI(TAG, "[DEBUG-audio] received=%lu audio_frames=%lu bytes=%d rate=%d open=%d",
+                 (unsigned long)received_frames, (unsigned long)real_audio_frames,
+                 (int)frame->size,
                  protocol->server_sample_rate_, protocol->IsAudioChannelOpened());
     }
+    previous_frame_was_real_audio = is_real_audio;
     // Schedule stores callbacks in a deque that can be dropped without running
     // (ResetProtocol, shutdown). A raw pointer captured there would have no
     // owner, so the packet and its payload would leak. shared_ptr is needed

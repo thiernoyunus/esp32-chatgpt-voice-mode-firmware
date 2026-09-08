@@ -20,6 +20,21 @@
   </p>
 </div>
 
+## Local monitor
+
+With Apollo connected over USB, run the serial reader and monitor in separate
+terminals:
+
+```bash
+python3 scripts/serial_log.py
+python3 scripts/monitor.py
+```
+
+Open <http://localhost:8787/> to see the conversation, real audio frames that
+reached the playback path, microphone drops, and screen snapshots. Logs are
+stored in `~/.apollo/apollo_live.log`, and three-byte WebRTC keepalive packets
+are excluded from the audio count.
+
 <!-- MARKDOWN LINKS & IMAGES -->
 [cpp-shield]: https://img.shields.io/badge/C++-00599C?style=for-the-badge&logo=cplusplus&logoColor=white
 [cpp-url]: https://isocpp.org/
