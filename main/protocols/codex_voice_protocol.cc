@@ -34,7 +34,7 @@ uint32_t NowMilliseconds() { return static_cast<uint32_t>(esp_timer_get_time() /
 // ponytail: fixed threshold; revisit only if healthy calls trip it.
 constexpr uint32_t kInboundAudioStallMs = 4000;
 constexpr uint32_t kAudioLogBurstGapMs = 250;
-constexpr size_t kMinimumVoiceAudioBytes = 4;
+constexpr size_t kMinimumVoiceAudioBytes = 3;
 
 std::string BuildConnectionUrl(const std::string& base_url, const std::string& device_id,
                                const std::string& token) {
@@ -198,6 +198,7 @@ bool CodexVoiceProtocol::OpenAudioChannel() {
     error_occurred_ = false;
     closing_ = false;
     speaking_ = false;
+    reply_audio_received_.store(false);
     uplink_pts_ms_ = 0;
     last_audio_frame_ms_.store(0);
     speech_expected_since_ms_.store(0);
@@ -294,6 +295,7 @@ void CodexVoiceProtocol::CloseAudioChannel(bool send_goodbye) {
     closing_ = true;
     channel_open_ = false;
     speaking_ = false;
+    reply_audio_received_.store(false);
     speech_expected_since_ms_.store(0);
 
     if (send_goodbye && websocket_ != nullptr && websocket_->IsConnected() &&
@@ -514,11 +516,14 @@ void CodexVoiceProtocol::HandleSignal(const char* data, size_t size) {
         const cJSON* delta = cJSON_GetObjectItemCaseSensitive(root, "delta");
         if (cJSON_IsString(role) && cJSON_IsString(delta) && delta->valuestring[0] != '\0' &&
             strcmp(role->valuestring, "assistant") == 0) {
-            // The assistant is producing a reply, so audio should follow. Arm
-            // the stall check unless audio is already flowing.
-            uint32_t expected = 0;
-            speech_expected_since_ms_.compare_exchange_strong(expected, NowMilliseconds());
             StartSpeaking();
+            if (!reply_audio_received_.load()) {
+                uint32_t expected = 0;
+                if (speech_expected_since_ms_.compare_exchange_strong(expected, NowMilliseconds()) &&
+                    reply_audio_received_.load()) {
+                    speech_expected_since_ms_.store(0);
+                }
+            }
         }
     } else if (strcmp(type->valuestring, "realtime_transcript_done") == 0) {
         const cJSON* role = cJSON_GetObjectItemCaseSensitive(root, "role");
@@ -531,10 +536,11 @@ void CodexVoiceProtocol::HandleSignal(const char* data, size_t size) {
             }
             ESP_LOGI(TAG, "%s transcript complete", role->valuestring);
             if (strcmp(role->valuestring, "assistant") == 0) {
-                // The reply is finished. Whatever audio was coming has either
-                // arrived or never will, and a completed turn must not leave
-                // the stall check armed against the next silence.
-                speech_expected_since_ms_.store(0);
+                // Keep recovery armed when the transcript wins the race with
+                // audio, but clear a stale expectation after audible replies.
+                if (reply_audio_received_.load()) {
+                    speech_expected_since_ms_.store(0);
+                }
                 StopSpeaking();
             }
         }
@@ -587,6 +593,9 @@ void CodexVoiceProtocol::HandleRealtimeEvent(const uint8_t* data, size_t size) {
         const cJSON* turn = cJSON_GetObjectItemCaseSensitive(root, "turn");
         const cJSON* role = cJSON_GetObjectItemCaseSensitive(turn, "role");
         if (cJSON_IsString(role) && strcmp(role->valuestring, "user") == 0) {
+            // A new user turn starts a fresh assistant reply expectation.
+            reply_audio_received_.store(false);
+            speech_expected_since_ms_.store(0);
             const auto session_id = request_id_;
             Application::GetInstance().Schedule([this, session_id]() {
                 if (!IsAudioChannelOpened() || request_id_ != session_id) return;
@@ -672,7 +681,7 @@ void CodexVoiceProtocol::CheckInboundAudioStall() {
     // was expected and no audio frame has arrived for several seconds, the
     // track is not going to recover on its own: fail the call so the normal
     // reconnect path rebuilds it.
-    const uint32_t expecting = speech_expected_since_ms_.load();
+    uint32_t expecting = speech_expected_since_ms_.load();
     if (expecting == 0 || closing_ || !IsAudioChannelOpened()) {
         return;
     }
@@ -682,7 +691,11 @@ void CodexVoiceProtocol::CheckInboundAudioStall() {
     if (now - quiet_since < kInboundAudioStallMs) {
         return;
     }
-    speech_expected_since_ms_.store(0);
+    // A real frame can arrive between the timeout check and this point. Only
+    // the caller that armed this check may consume it and trigger recovery.
+    if (!speech_expected_since_ms_.compare_exchange_strong(expecting, 0)) {
+        return;
+    }
     ESP_LOGE(TAG, "No reply audio for %lu ms; restarting the voice call",
              (unsigned long)(now - quiet_since));
     Fail("Apollo's voice stopped coming through. Reconnecting.");
@@ -739,9 +752,10 @@ int CodexVoiceProtocol::OnPeerAudio(esp_peer_audio_frame_t* frame, void* context
     ++received_frames;
     if (is_real_audio) {
         ++real_audio_frames;
+        protocol->reply_audio_received_.store(true);
+        protocol->speech_expected_since_ms_.store(0);
+        protocol->last_audio_frame_ms_.store(now);
     }
-    protocol->last_audio_frame_ms_.store(now);
-    protocol->speech_expected_since_ms_.store(0);
     if (now - last_audio_log >= 1000 || new_audio_burst ||
         (is_real_audio && now - previous_audio_frame_ms >= kAudioLogBurstGapMs)) {
         last_audio_log = now;

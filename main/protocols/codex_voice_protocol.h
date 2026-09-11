@@ -51,6 +51,7 @@ private:
     std::atomic<bool> channel_open_{false};
     std::atomic<bool> closing_{false};
     std::atomic<bool> speaking_{false};
+    std::atomic<bool> reply_audio_received_{false};
     std::string request_id_;
     uint32_t uplink_pts_ms_ = 0;
 
