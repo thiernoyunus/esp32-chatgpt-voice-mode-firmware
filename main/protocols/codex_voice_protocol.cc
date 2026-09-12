@@ -33,6 +33,12 @@ uint32_t NowMilliseconds() { return static_cast<uint32_t>(esp_timer_get_time() /
 // that the user does not sit through a whole silent answer.
 // ponytail: fixed threshold; revisit only if healthy calls trip it.
 constexpr uint32_t kInboundAudioStallMs = 4000;
+
+/* Did `sample` happen at or after `since`? Subtracting first keeps this honest
+ * across the millisecond clock's 49-day wrap, which a plain > would not. */
+bool AtOrAfter(uint32_t sample, uint32_t since) {
+    return static_cast<int32_t>(sample - since) >= 0;
+}
 constexpr uint32_t kAudioLogBurstGapMs = 250;
 constexpr size_t kMinimumVoiceAudioBytes = 3;
 
@@ -198,7 +204,6 @@ bool CodexVoiceProtocol::OpenAudioChannel() {
     error_occurred_ = false;
     closing_ = false;
     speaking_ = false;
-    reply_audio_received_.store(false);
     uplink_pts_ms_ = 0;
     last_audio_frame_ms_.store(0);
     speech_expected_since_ms_.store(0);
@@ -295,7 +300,6 @@ void CodexVoiceProtocol::CloseAudioChannel(bool send_goodbye) {
     closing_ = true;
     channel_open_ = false;
     speaking_ = false;
-    reply_audio_received_.store(false);
     speech_expected_since_ms_.store(0);
 
     if (send_goodbye && websocket_ != nullptr && websocket_->IsConnected() &&
@@ -517,13 +521,12 @@ void CodexVoiceProtocol::HandleSignal(const char* data, size_t size) {
         if (cJSON_IsString(role) && cJSON_IsString(delta) && delta->valuestring[0] != '\0' &&
             strcmp(role->valuestring, "assistant") == 0) {
             StartSpeaking();
-            if (!reply_audio_received_.load()) {
-                uint32_t expected = 0;
-                if (speech_expected_since_ms_.compare_exchange_strong(expected, NowMilliseconds()) &&
-                    reply_audio_received_.load()) {
-                    speech_expected_since_ms_.store(0);
-                }
-            }
+            // The assistant is producing a reply, so audio should follow. Arm
+            // the stall check; the check itself only counts frames that arrive
+            // after this moment, so a packet still draining from an
+            // interrupted reply cannot stand in for this one.
+            uint32_t expected = 0;
+            speech_expected_since_ms_.compare_exchange_strong(expected, NowMilliseconds());
         }
     } else if (strcmp(type->valuestring, "realtime_transcript_done") == 0) {
         const cJSON* role = cJSON_GetObjectItemCaseSensitive(root, "role");
@@ -536,9 +539,12 @@ void CodexVoiceProtocol::HandleSignal(const char* data, size_t size) {
             }
             ESP_LOGI(TAG, "%s transcript complete", role->valuestring);
             if (strcmp(role->valuestring, "assistant") == 0) {
-                // Keep recovery armed when the transcript wins the race with
-                // audio, but clear a stale expectation after audible replies.
-                if (reply_audio_received_.load()) {
+                // An audible reply has nothing left to recover, so stop
+                // watching it - otherwise the silence after it ends would trip
+                // the check. A reply that finished its words without ever
+                // being heard stays armed, which is the whole point.
+                const uint32_t expecting = speech_expected_since_ms_.load();
+                if (expecting != 0 && AtOrAfter(last_audio_frame_ms_.load(), expecting)) {
                     speech_expected_since_ms_.store(0);
                 }
                 StopSpeaking();
@@ -593,8 +599,7 @@ void CodexVoiceProtocol::HandleRealtimeEvent(const uint8_t* data, size_t size) {
         const cJSON* turn = cJSON_GetObjectItemCaseSensitive(root, "turn");
         const cJSON* role = cJSON_GetObjectItemCaseSensitive(turn, "role");
         if (cJSON_IsString(role) && strcmp(role->valuestring, "user") == 0) {
-            // A new user turn starts a fresh assistant reply expectation.
-            reply_audio_received_.store(false);
+            // A new user turn cancels any reply we were still waiting on.
             speech_expected_since_ms_.store(0);
             const auto session_id = request_id_;
             Application::GetInstance().Schedule([this, session_id]() {
@@ -687,7 +692,10 @@ void CodexVoiceProtocol::CheckInboundAudioStall() {
     }
     const uint32_t now = NowMilliseconds();
     const uint32_t last_frame = last_audio_frame_ms_.load();
-    const uint32_t quiet_since = last_frame > expecting ? last_frame : expecting;
+    // Frames older than the moment we armed do not count: they belong to an
+    // earlier reply. This max() is the whole defence against a barge-in's
+    // trailing packets passing for the next reply's voice.
+    const uint32_t quiet_since = AtOrAfter(last_frame, expecting) ? last_frame : expecting;
     if (now - quiet_since < kInboundAudioStallMs) {
         return;
     }
@@ -752,8 +760,10 @@ int CodexVoiceProtocol::OnPeerAudio(esp_peer_audio_frame_t* frame, void* context
     ++received_frames;
     if (is_real_audio) {
         ++real_audio_frames;
-        protocol->reply_audio_received_.store(true);
-        protocol->speech_expected_since_ms_.store(0);
+        // Only the timestamp. This runs on the WebRTC callback, which knows
+        // nothing about which reply the frame belongs to - the stall check
+        // compares this against when it started listening and draws its own
+        // conclusion.
         protocol->last_audio_frame_ms_.store(now);
     }
     if (now - last_audio_log >= 1000 || new_audio_burst ||
