@@ -43,6 +43,7 @@ protected:
     lv_obj_t* voice_mute_icon_ = nullptr;
     lv_obj_t* voice_end_button_ = nullptr;
     lv_obj_t* voice_orb_canvas_ = nullptr;
+    lv_obj_t* voice_state_caption_ = nullptr;
     lv_timer_t* voice_orb_timer_ = nullptr;
     lv_color16_t* voice_orb_buffer_ = nullptr;
     lv_obj_t* voice_model_label_ = nullptr;
@@ -54,8 +55,13 @@ protected:
     bool voice_orb_active_ = false;
     uint32_t voice_orb_started_at_ = 0;
     uint32_t voice_orb_color_ = 0x7465EB;
+    int voice_shape_ = 0;
+    int voice_colour_ = 0;
+    std::string voice_state_caption_text_;
+    uint32_t voice_state_caption_color_ = 0;
 
     void RenderVoiceOrb(float seconds);
+    void UpdateVoiceStateCaption(const char* text, uint32_t color);
     lv_obj_t* confirm_root_ = nullptr;
     lv_obj_t* confirm_summary_ = nullptr;
     lv_obj_t* confirm_approve_btn_ = nullptr;
@@ -80,6 +86,7 @@ public:
     void SetVoiceActivity(const char* activity, const char* icon = "none",
                           const char* pixels = nullptr) override;
     void SetVoiceModel(const char* name) override;
+    void SetVoiceCharacter(int shape, int colour);
     void ShowVoiceModels(const std::vector<std::string>& names, size_t page) override;
     void HideVoiceModels() override;
     void FeedTouch(bool pressed, int x, int y) override;

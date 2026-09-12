@@ -1,5 +1,8 @@
 #include "watch_ui.h"
 #include "watch_icons.h"
+#include "watch_dotmatrix.h"   /* the app-pixels look; the ChatGPT pages are moving to it */
+#include "bloub/bloub_shapes.h"
+#include "voice_character.h"
 #include <algorithm>
 #include <cctype>
 #include <cmath>
@@ -9,8 +12,45 @@
 
 namespace {
 constexpr uint32_t kRaised = 0x181F2C, kAccent = 0x10A37F;
+// The round screen's geometry, shared with the design mockups: centre, and the
+// radius everything drawn has to stay inside of.
+constexpr int kCenter = 180, kSafeR = 176;
+constexpr int kDotNav = 44;    // smallest comfortable touch target here
+constexpr int kDotRowH = 46;   // app-pixels list row
+constexpr const char* kShapeNames[]={"Circle","Pebble","Squircle","Capsule","Triangle","Hexagon","Cloud","Droplet"};
+static_assert(sizeof(kShapeNames)/sizeof(kShapeNames[0])==voice_character::kShapeCount,
+              "a silhouette has no name, or a name has no silhouette");
+constexpr const char* kColourNames[]={"Cream","Grey","Brown","Red","Orange","Amber","Green","Teal","Blue","Violet","Pink"};
+static_assert(sizeof(kColourNames)/sizeof(kColourNames[0])==voice_character::kColorCount,
+              "a colour has no name, or a name has no colour");
+/* Straight ahead and expressionless. bloub's NEUTRAL expression is the rest
+ * gaze measured off the reference video - a three-quarter view - which at
+ * preview size reads as looking off to one side and leaves only one eye
+ * visible, so it does not read as neutral at all. Neutral here means the
+ * plain front-facing face. */
+static const bloub_gaze_t kNeutralPreview={0.0f,0.0f,0.0f};
+lv_obj_t* ShapePreview(lv_obj_t* parent, int shape, uint32_t color, int size=44, int scale=18) {
+    auto* buf=static_cast<lv_color16_t*>(dm_alloc(size*size*sizeof(lv_color16_t)));
+    if(!buf) return nullptr;
+    memset(buf,0,size*size*sizeof(lv_color16_t));
+    auto canvas=lv_canvas_create(parent);
+    if(!canvas){dm_release(buf);return nullptr;}
+    lv_canvas_set_buffer(canvas,buf,size,size,LV_COLOR_FORMAT_RGB565);
+    lv_obj_set_size(canvas,size,size);
+    lv_obj_add_event_cb(canvas,dm_free_buffer,LV_EVENT_DELETE,buf);
+    bloub_face_cfg_t face{};face.radii=SHAPE_PROFILES[shape];face.gaze=&kNeutralPreview;
+    face.split=BLOUB_EYE_SPLIT;face.scale=scale;face.cx=face.cy=size/2.0f;face.sx=face.sy=1;face.eye_alpha=1;
+    for(int e=0;e<2;++e){face.eyes[e].w=.236f;face.eyes[e].h=.447f;face.eyes[e].open=1;}
+    bloub_draw_face(reinterpret_cast<uint16_t*>(buf),size,size,&face,lv_color_to_u16(lv_color_hex(color)),0);
+    return canvas;
+}
+int ChordHalf(int y) {
+    const int dy = y - kCenter;
+    const int inside = kSafeR * kSafeR - dy * dy;
+    return inside > 0 ? static_cast<int>(std::sqrt(static_cast<float>(inside))) : 0;
+}
 void Background(lv_obj_t* obj) {
-    lv_obj_set_style_bg_color(obj, lv_color_hex(0x0C1220), 0);
+    lv_obj_set_style_bg_color(obj, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_opa(obj, LV_OPA_COVER, 0);
 }
 // Render an icon at its source size, except 24px controls placed inside a 96px
@@ -58,7 +98,7 @@ bool IsHex(char c) {
 WatchUi::WatchUi(lv_obj_t* voice, std::shared_ptr<LvglFont> font, Callback callback)
     : voice_(voice), font_owner_(std::move(font)),
       font_(font_owner_ == nullptr ? nullptr : font_owner_->font()), callback_(std::move(callback)) {
-    shell_ = Box(lv_obj_get_parent(voice), 0, 0, 360, 360, 0x0C1220, 0);
+    shell_ = Box(lv_obj_get_parent(voice), 0, 0, 360, 360, 0x000000, 0);
     lv_obj_set_style_text_font(shell_, font_, 0);
     lv_obj_set_style_text_color(shell_, lv_color_white(), 0);
     Background(shell_);
@@ -103,15 +143,35 @@ lv_obj_t* WatchUi::Button(lv_obj_t* p, int x, int y, int w, int h, const char* t
     Click(b,std::move(fn)); return b;
 }
 void WatchUi::Header(const char* title, Page back) {
-    Button(shell_,66,38,44,44,"",&watch_icons::back,[this,back]{Show(back);});
+    if(dot_style_){
+        // Back arrow and title on ONE line, centred as a pair - the way the
+        // device's own ChatGPT sheet already lays it out, and why the arrow
+        // left the corner. The title steps down one dot size when the pair
+        // cannot clear the circle: the button is a fixed 44px touch target and
+        // must not shrink.
+        dm_style_t st={4,3,1,kAccent,0x101010};
+        const int cy=70;
+        const int half=ChordHalf(cy-kDotNav/2)-10;
+        int w=dm_width(title,&st);
+        // Step the title down a dot size until the pair clears the circle. The
+        // button is a fixed 44px touch target and must not shrink, so a title
+        // too long for one line pays for it in size instead.
+        while(st.pitch>2&&kDotNav+12+w>2*half){st.pitch--;st.dot--;w=dm_width(title,&st);}
+        const int x0=kCenter-(kDotNav+12+w)/2;
+        Button(shell_,x0,cy-kDotNav/2,kDotNav,kDotNav,"",&watch_icons::back,[this,back]{Show(back);},0x1A1A1A);
+        dm_text(shell_,x0+kDotNav+12,cy-DM_H*st.pitch/2,title,&st);
+        Box(shell_,84,cy+26,192,1,0x2A2A33,0);   // hairline, not a filled bar
+        return;
+    }
+   Button(shell_,66,38,44,44,"",&watch_icons::back,[this,back]{Show(back);});
     auto l=Label(shell_,title,154);lv_obj_set_pos(l,116,49);
 }
 lv_obj_t* WatchUi::Column() {
-    auto c=Box(shell_,62,90,236,220,0,0);
+    auto c=Box(shell_,62,dot_style_?100:90,236,dot_style_?212:220,0,0);
     lv_obj_set_style_bg_opa(c,LV_OPA_TRANSP,0);
     lv_obj_add_flag(c,LV_OBJ_FLAG_SCROLLABLE);
     lv_obj_set_flex_flow(c,LV_FLEX_FLOW_COLUMN);
-    lv_obj_set_style_pad_row(c,10,0);
+    lv_obj_set_style_pad_row(c,dot_style_?0:10,0);
     lv_obj_set_scroll_dir(c,LV_DIR_VER);
     lv_obj_set_scrollbar_mode(c,LV_SCROLLBAR_MODE_OFF);
     return column_=c;
@@ -119,7 +179,37 @@ lv_obj_t* WatchUi::Column() {
 // Row is read-only when `fn` is empty: no chevron, no navigation behavior.
 // The bool is captured before std::move so the chevron stays consistent.
 void WatchUi::Row(const char* title,const char* value,const lv_image_dsc_t* icon,std::function<void()> fn) {
-    const bool navigable = static_cast<bool>(fn);
+    if(dot_style_){
+        // Plain row: name left, value right on the SAME line, no icon chip and
+        // no chevron. Only the current row is filled, and it carries a 3px
+        // accent rule on the left - which is what makes the list scannable with
+        // no other chrome at all. A page marks its current row by passing "On"
+        // as that row's value.
+        const bool current=value!=nullptr&&strcmp(value,"On")==0;
+        auto r=Box(column_,0,0,236,kDotRowH,current?0x141414:0x000000,2);
+        lv_obj_set_style_bg_opa(r,current?LV_OPA_COVER:LV_OPA_TRANSP,0);
+        if(current){auto s=Box(r,0,0,3,kDotRowH,kAccent,0);lv_obj_remove_flag(s,LV_OBJ_FLAG_CLICKABLE);}
+        if(fn) Click(r,std::move(fn));
+        dm_style_t n={3,2,1,current?0xFFFFFFu:0x8E8E93u,0x101010u};
+        dm_style_t v={3,2,1,current?kAccent:0x5A5A5Fu,0x101010u};
+        const bool has_value=value!=nullptr&&value[0]!=0;
+        // The row has to hold a name and a value on ONE line, and nine
+        // characters of name at pitch 3 leaves no room for one. Both step down
+        // to pitch 2 together - the same trade the header makes with its title.
+        if(has_value&&14+dm_width(title,&n)+16+dm_width(value,&v)>236-12){
+            n.pitch=2;n.dot=1;v.pitch=2;v.dot=1;
+        }
+        dm_text(r,14,(kDotRowH-DM_H*n.pitch)/2,title,&n);
+        if(has_value){
+            const int vw=dm_width(value,&v);
+            // Anything that still cannot fit beside its name is dropped rather
+            // than written over it - a long chat title, usually.
+            if(14+dm_width(title,&n)+16+vw<=236-12)
+                dm_text(r,236-12-vw,(kDotRowH-DM_H*v.pitch)/2,value,&v);
+        }
+       return;
+    }
+   const bool navigable = static_cast<bool>(fn);
     auto r=Button(column_,0,0,236,62,"",nullptr,std::move(fn));
     lv_obj_clean(r);
     if(icon){auto chip=Box(r,10,15,32,32,0x232C3A,16);Icon(chip,icon);lv_obj_remove_flag(chip,LV_OBJ_FLAG_CLICKABLE);}
@@ -134,6 +224,15 @@ void WatchUi::Row(const char* title,const char* value,const lv_image_dsc_t* icon
 }
 void WatchUi::Show(Page page) {
     page_=page;
+    // Every page wears the app-pixels language except the three that are not
+    // lists: Home keeps its icon tiles by request, the call screen is the
+    // character, and the keyboard and Wi-Fi setup bring their own layout.
+    switch(page){
+    case Page::Home: case Page::Voice: case Page::Keyboard: case Page::WifiSetup:
+    case Page::Sleep:
+        dot_style_=false;break;
+    default: dot_style_=true;break;
+    }
     if(page==Page::Voice){
         lv_obj_add_flag(shell_,LV_OBJ_FLAG_HIDDEN);lv_obj_remove_flag(voice_,LV_OBJ_FLAG_HIDDEN);return;
     }
@@ -141,6 +240,10 @@ void WatchUi::Show(Page page) {
     lv_obj_remove_flag(shell_,LV_OBJ_FLAG_HIDDEN);lv_obj_move_foreground(shell_);
     lv_obj_clean(shell_);column_=clock_=date_=value_=field_=keys_=wifi_status_=notice_=error_=nullptr;
     keyboard_done_={};
+    // App-pixels pages are pure black with no gradient; the rest keep the navy
+    // watch background they have always had.
+    if(dot_style_){lv_obj_set_style_bg_color(shell_,lv_color_hex(0x000000),0);lv_obj_set_style_bg_grad_dir(shell_,LV_GRAD_DIR_NONE,0);}
+    else Background(shell_);
     switch(page){
     case Page::Home: {
         clock_=Label(shell_,time_.c_str());lv_obj_align(clock_,LV_ALIGN_TOP_MID,0,30);
@@ -254,7 +357,7 @@ void WatchUi::Show(Page page) {
         auto l=Label(shell_,info_.connected?"Wi-Fi connected":"Waiting for Wi-Fi",220);lv_obj_set_style_text_align(l,LV_TEXT_ALIGN_CENTER,0);lv_obj_align(l,LV_ALIGN_CENTER,0,80);break;
     }
     case Page::About:{
-        Header("About Apollo",Page::Home);Column();
+        Header("About Apollo",Page::Settings);Column();
         Row("Firmware",info_.version.c_str(),&watch_icons::info,{});
         Row("Voice","Codex Voice / WebRTC",&watch_icons::mic,{});
         std::string battery=info_.battery<0?"Not available":std::to_string(info_.battery)+"%"+(info_.charging?" - charging":"");
@@ -263,10 +366,57 @@ void WatchUi::Show(Page page) {
     }
     case Page::CodexSettings:
         Header("ChatGPT",Page::Voice);Column();
-        Row("Chat",info_.temporary_chat?"Temporary":info_.chat.c_str(),&watch_icons::more,[this]{Show(Page::Chats);Emit(Action::Models);});
-        Row("Model",info_.model.c_str(),&watch_icons::more,[this]{model_return_=Page::CodexSettings;Show(Page::Models);Emit(Action::Models);});
+        Row("Shape",kShapeNames[std::clamp(info_.shape,0,voice_character::kShapeCount-1)],nullptr,[this]{Show(Page::Shapes);});
+        Row("Colour",kColourNames[std::clamp(info_.colour,0,voice_character::kColorCount-1)],nullptr,[this]{Show(Page::Colours);});
         Row("Voice",info_.voice.empty()?"Default":info_.voice.c_str(),&watch_icons::mic,[this]{Show(Page::Voices);});
+        Row("Model",info_.model.c_str(),&watch_icons::more,[this]{model_return_=Page::CodexSettings;Show(Page::Models);Emit(Action::Models);});
+        Row("Chat",info_.temporary_chat?"Temporary":info_.chat.c_str(),&watch_icons::more,[this]{Show(Page::Chats);Emit(Action::Models);});
         Row("Reasoning",info_.reasoning.c_str(),&watch_icons::more,[this]{Show(Page::Reasoning);});break;
+    case Page::Shapes: {
+        Header("Shape",Page::CodexSettings);Column();
+        // Four rows fill the space between the header rule and the bottom of
+        // the circle; the rest stay reachable by swiping. No counter: the list
+        // is short enough to see, and the number was just sitting in space.
+        lv_obj_set_height(column_,208);
+        for(int i=0;i<voice_character::kShapeCount;++i){
+            Row(kShapeNames[i],info_.shape==i?"On":nullptr,nullptr,[this,i]{
+                info_.shape=i; Emit(Action::SelectShape,i); Show(Page::Shapes);
+            });
+            auto row=lv_obj_get_child(column_,lv_obj_get_child_cnt(column_)-1);
+            lv_obj_set_height(row,52);   /* fill the page rather than 46 of it */
+            // Row() creates the title canvas immediately after the optional
+            // selection stripe. Give the larger face a dedicated left lane so
+            // it never covers the first letters of the name.
+            const uint32_t title_index=info_.shape==i?1:0;
+            if(lv_obj_get_child_cnt(row)>title_index){
+                lv_obj_set_x(lv_obj_get_child(row,title_index),50);
+                lv_obj_set_y(lv_obj_get_child(row,title_index),15);
+            }
+            if(auto preview=ShapePreview(row,i,info_.shape==i?0xF1EFE9:0x8E8E93))
+                lv_obj_set_pos(preview,2,4);
+        }
+        break;
+    }
+    case Page::Colours: {
+        Header("Colour",Page::CodexSettings);
+        const int row_n[]={3,4,4}, row_y[]={140,202,264}; int at=0;
+        // The rows have to account for every colour: one short and the last is
+        // unreachable, one over and this walks off the end of the palette.
+        static_assert(3+4+4==voice_character::kColorCount,
+                      "the colour grid's rows no longer add up to the palette");
+        for(int row=0;row<3;++row) for(int col=0;col<row_n[row];++col,++at){
+            const int cx=180+(col*54-(row_n[row]-1)*27);
+            auto swatch=Box(shell_,cx-23,row_y[row]-23,46,46,voice_character::kColors[at],12);
+            Click(swatch,[this,at]{info_.colour=at;Emit(Action::SelectColour,at);Show(Page::Colours);});
+            if(info_.colour==at){
+                lv_obj_set_style_border_width(swatch,2,0);
+                lv_obj_set_style_border_color(swatch,lv_color_white(),0);
+                lv_obj_set_style_outline_width(swatch,3,0);
+                lv_obj_set_style_outline_color(swatch,lv_color_black(),0);
+            }
+        }
+        break;
+    }
     case Page::Voices: {
         Header("Voice",Page::CodexSettings);Column();
         // Names come from the app-server's v1 realtime voice set, which is what
@@ -320,7 +470,7 @@ void WatchUi::Show(Page page) {
         break;
     }
     case Page::Models:
-        Header("Next call model",model_return_);Column();
+        Header("Model",model_return_);Column();
         if(info_.models.size()<=1) {auto l=Label(column_,"Open a voice call to load\nyour available models.",236);lv_label_set_long_mode(l,LV_LABEL_LONG_WRAP);}
         for(size_t i=0;i<info_.models.size();++i){Row(info_.models[i].c_str(),nullptr,nullptr,[this,i]{Emit(Action::SelectModel,static_cast<int>(i));Show(model_return_);});}break;
     case Page::Approvals: {

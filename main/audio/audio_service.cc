@@ -1,28 +1,38 @@
 #include "audio_service.h"
 #include <esp_log.h>
+#include <cstdlib>
 #include <cstring>
 #include <algorithm>
 
 namespace {
-// ponytail: fixed microphone calibration; use adaptive gain if louder voices clip.
-constexpr int kCodexVoiceInputGain = 16;
+// ponytail: fixed microphone calibration. 16 pegged every loud syllable at full
+// scale, and clipped audio cannot be told apart from speaker echo, so barge-in
+// never reached the far end. Raise or lower this against the raw_peak figure in
+// the [DEBUG-bargein] log line, which is measured before this gain is applied:
+// aim for raw_peak * gain just under 32767 on the loudest speech.
+constexpr int kCodexVoiceInputGain = 4;
 constexpr int16_t CodexVoiceInputSample(int16_t sample) {
     return static_cast<int16_t>(std::clamp(static_cast<int>(sample) * kCodexVoiceInputGain,
                                          -32768, 32767));
 }
 static_assert(CodexVoiceInputSample(0) == 0);
-static_assert(CodexVoiceInputSample(100) == 1600);
-static_assert(CodexVoiceInputSample(-100) == -1600);
+static_assert(CodexVoiceInputSample(100) == 400);
+static_assert(CodexVoiceInputSample(-100) == -400);
 static_assert(CodexVoiceInputSample(32767) == 32767);
 static_assert(CodexVoiceInputSample(-32768) == -32768);
 // ponytail: a small loudness meter, not a speech detector; tune for this microphone.
-int CodexVoiceLevel(const std::vector<int16_t>& pcm) {
+// `scale` keeps the meter where it was calibrated when the uplink gain changes,
+// so retuning kCodexVoiceInputGain does not quietly flatten the face animation.
+int CodexVoiceLevel(const std::vector<int16_t>& pcm, int scale = 1) {
     if (pcm.empty()) return 0;
     int64_t magnitude = 0;
     for (int sample : pcm) magnitude += sample < 0 ? -sample : sample;
-    return std::clamp(static_cast<int>(magnitude / static_cast<int64_t>(pcm.size()) - 128) / 24,
-                      0, 100);
+    const int64_t mean = magnitude * scale / static_cast<int64_t>(pcm.size());
+    return std::clamp(static_cast<int>(mean - 128) / 24, 0, 100);
 }
+// The meter was calibrated against a 16x uplink; hold it there whatever the
+// uplink gain becomes.
+constexpr int kCodexVoiceMeterScale = 16 / kCodexVoiceInputGain;
 }  // namespace
 
 #define RATE_CVT_CFG(_src_rate, _dest_rate, _channel)        \
@@ -115,21 +125,24 @@ void AudioService::Initialize(AudioCodec* codec) {
 #endif
     audio_engine_->OnOutput([this](std::vector<int16_t>&& data) {
 #ifdef CONFIG_APOLLO_CODEX_VOICE
-        for (auto& sample : data) {
-            sample = CodexVoiceInputSample(sample);
-        }
-        input_voice_level_.store(microphone_muted_ ? 0 : CodexVoiceLevel(data));
         /* Barge-in measurement: compare what the microphone delivers while the
          * speaker is idle against what it delivers while Apollo is talking. If
-         * echo cancellation is scrubbing the user's interruption, mic_peak
+         * echo cancellation is scrubbing the user's interruption, raw_peak
          * collapses in the speaking case even when the user is shouting.
+         * Measured before kCodexVoiceInputGain so the figure stays usable for
+         * calibration once the gain itself clips.
          * Logged at most once a second; remove once barge-in is settled. */
+        int raw_peak = 0;
+        for (auto& sample : data) {
+            raw_peak = std::max(raw_peak, sample < 0 ? -sample : sample);
+            sample = CodexVoiceInputSample(sample);
+        }
+        input_voice_level_.store(
+            microphone_muted_ ? 0 : CodexVoiceLevel(data, kCodexVoiceMeterScale));
         {
-            int mic_peak = 0;
-            for (int sample : data) mic_peak = std::max(mic_peak, sample < 0 ? -sample : sample);
             static int64_t last_bargein_log = 0;
             static int mic_peak_window = 0;
-            mic_peak_window = std::max(mic_peak_window, mic_peak);
+            mic_peak_window = std::max(mic_peak_window, raw_peak);
             const int64_t now = esp_timer_get_time();
             if (now - last_bargein_log >= 1000000) {
                 last_bargein_log = now;
@@ -137,8 +150,10 @@ void AudioService::Initialize(AudioCodec* codec) {
                  * second, not merely that a write was in flight this instant. */
                 const bool speaker_active =
                     now - last_loud_output_us_.load() < 1000000;
-                ESP_LOGI(TAG, "[DEBUG-bargein] mic_peak=%d speaker_active=%d",
-                         mic_peak_window, speaker_active ? 1 : 0);
+                ESP_LOGI(TAG, "[DEBUG-bargein] raw_peak=%d gained=%d speaker_active=%d",
+                         mic_peak_window,
+                         std::min(mic_peak_window * kCodexVoiceInputGain, 32767),
+                         speaker_active ? 1 : 0);
                 mic_peak_window = 0;
             }
         }
@@ -351,6 +366,31 @@ void AudioService::AudioInputTask() {
             int samples = 160; // 10ms
             std::vector<int16_t> data;
             if (ReadAudioData(data, 16000, samples)) {
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+                /* Echo-cancellation input check. The codec hands the AFE two
+                 * interleaved channels: the microphone, then the loopback of
+                 * what the speaker is playing. The canceller subtracts the
+                 * second from the first, so a silent or badly scaled loopback
+                 * makes it a no-op no matter how it is tuned. Printing both
+                 * peaks says which one we have. Logged once a second; remove
+                 * once barge-in is settled. */
+                if (codec_->input_channels() == 2) {
+                    static int64_t last_reference_log = 0;
+                    static int mic_window = 0, reference_window = 0;
+                    for (size_t i = 0; i + 1 < data.size(); i += 2) {
+                        mic_window = std::max<int>(mic_window, std::abs(data[i]));
+                        reference_window = std::max<int>(reference_window, std::abs(data[i + 1]));
+                    }
+                    const int64_t now = esp_timer_get_time();
+                    if (now - last_reference_log >= 1000000) {
+                        last_reference_log = now;
+                        ESP_LOGI(TAG, "[DEBUG-aecin] mic=%d reference=%d speaker_active=%d",
+                                 mic_window, reference_window,
+                                 now - last_loud_output_us_.load() < 1000000 ? 1 : 0);
+                        mic_window = reference_window = 0;
+                    }
+                }
+#endif
                 audio_engine_->Feed(std::move(data));
                 continue;
             }

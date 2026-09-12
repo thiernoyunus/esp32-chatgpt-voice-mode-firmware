@@ -14,6 +14,7 @@
 #include "codex_voice_protocol.h"
 #include "display/voice_geometry.h"
 #include "display/lcd_display.h"
+#include "display/voice_character.h"
 #else
 #include "apollo_protocol.h"
 #endif
@@ -1858,6 +1859,10 @@ void Application::RefreshWatchInfo() {
     Settings saved_display("display", false);
     info.brightness = saved_display.GetInt("brightness", 75);
     info.sleep_seconds = saved_display.GetInt("sleep_seconds", 60);
+    info.shape = std::clamp<int32_t>(saved_display.GetInt("voice_shape", 0), 0,
+                                     voice_character::kShapeCount - 1);
+    info.colour = std::clamp<int32_t>(saved_display.GetInt("voice_colour", 0), 0,
+                                      voice_character::kColorCount - 1);
     screen_sleep_seconds_ = info.sleep_seconds;
     if (auto codec = board.GetAudioCodec()) info.volume = codec->output_volume();
     bool discharging = false;
@@ -1982,6 +1987,22 @@ void Application::OnWatchAction(WatchUi::Action action, int value,
                 s.SetString("voice", text);
                 pending_watch_notification_ =
                     text.empty() ? "Default voice for next call" : "Voice saved for next call";
+                break;
+            }
+            case WatchUi::Action::SelectShape:
+            case WatchUi::Action::SelectColour: {
+                Settings s("display", true);
+                int shape = s.GetInt("voice_shape", 0);
+                int colour = s.GetInt("voice_colour", 0);
+                if (action == WatchUi::Action::SelectShape) {
+                    shape = std::clamp(value, 0, voice_character::kShapeCount - 1);
+                } else {
+                    colour = std::clamp(value, 0, voice_character::kColorCount - 1);
+                }
+                s.SetInt("voice_shape", shape);
+                s.SetInt("voice_colour", colour);
+                if (auto lcd = dynamic_cast<LcdDisplay*>(board.GetDisplay())) lcd->SetVoiceCharacter(shape, colour);
+                pending_watch_notification_ = action == WatchUi::Action::SelectShape ? "Shape saved" : "Colour saved";
                 break;
             }
             case WatchUi::Action::Sleep:

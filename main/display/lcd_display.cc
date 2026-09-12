@@ -1,4 +1,7 @@
 #include "lcd_display.h"
+#include "bloub/bloub_shapes.h"   /* the character */
+#include "voice_character.h"        /* the palette and counts it is worn in */
+#include "bloub/bloub_face.h"
 #include "assets/lang_config.h"
 #include "gif/lvgl_gif.h"
 #include "lvgl_theme.h"
@@ -6,6 +9,7 @@
 #include "voice_geometry.h"
 #include "confirm_geometry.h"
 #include "watch_icons.h"
+#include "watch_dotmatrix.h"
 
 #include <esp_err.h>
 #include <esp_log.h>
@@ -38,6 +42,39 @@ namespace {
 // Fluid shading ported from Rare UI's Fluid Orb: https://www.rareui.com/components/fluidorb
 constexpr uint32_t kFluidOrbFramePeriodMs = 66;
 constexpr int kFluidOrbSampleStep = 2;
+
+constexpr uint32_t kVoiceGreen = 0x30C46E;
+constexpr uint32_t kVoiceCyan = 0x2FD8E8;
+constexpr uint32_t kVoiceAmber = 0xF5A524;
+constexpr uint32_t kVoiceRed = 0xE5484D;
+constexpr uint32_t kVoiceGray = 0x8E8E93;
+
+static_assert(voice_character::kShapeCount == static_cast<int>(SHAPE_COUNT),
+              "the picker's shape count and bloub's silhouette table have drifted apart");
+
+struct VoiceStateCaption {
+    const char* text;
+    uint32_t color;
+};
+
+VoiceStateCaption CaptionForDeviceState(DeviceState state, bool muted) {
+    switch (state) {
+        case kDeviceStateStarting:
+        case kDeviceStateActivating: return {"WAKING", kVoiceGreen};
+        case kDeviceStateWifiConfiguring:
+        case kDeviceStateConnecting: return {"CONNECTING", kVoiceCyan};
+        case kDeviceStateListening:
+            return muted ? VoiceStateCaption{"MUTED", kVoiceGray}
+                         : VoiceStateCaption{"LISTENING", kVoiceGreen};
+        case kDeviceStateSpeaking: return {"SPEAKING", kVoiceCyan};
+        case kDeviceStateUpgrading: return {"UPGRADING", 0x7465EB};
+        case kDeviceStateFatalError: return {"ERROR", kVoiceRed};
+        case kDeviceStateAudioTesting: return {"TESTING", kVoiceAmber};
+        case kDeviceStateUnknown:
+        case kDeviceStateIdle:
+        default: return {"READY", kVoiceGray};
+    }
+}
 
 float FluidOrbMix(float first, float second, float amount) {
     return first + (second - first) * amount;
@@ -451,7 +488,7 @@ void LcdDisplay::SetupUI() {
     auto screen = lv_screen_active();
     lv_obj_set_style_text_font(screen, text_font, 0);
     lv_obj_set_style_text_color(screen, lvgl_theme->text_color(), 0);
-    lv_obj_set_style_bg_color(screen, lvgl_theme->background_color(), 0);
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x000000), 0);
 
     /* Container */
     container_ = lv_obj_create(screen);
@@ -914,6 +951,20 @@ void LcdDisplay::SetupUI() {
     auto large_icon_font = lvgl_theme->large_icon_font()->font();
 
     voice_root_ = lv_obj_create(lv_screen_active());
+    {
+        Settings character("display", false);
+        voice_shape_ = std::clamp<int32_t>(character.GetInt("voice_shape", 0), 0,
+                                          voice_character::kShapeCount - 1);
+        voice_colour_ = std::clamp<int32_t>(character.GetInt("voice_colour", 0), 0,
+                                           voice_character::kColorCount - 1);
+    }
+    /* Black, like every other screen the character appears on. The voice screen
+     * used to be navy, which left the character sitting in a black square on a
+     * dark blue page - two different darks, and the square was the seam. */
+    lv_obj_set_style_bg_color(voice_root_, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_grad_color(voice_root_, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_grad_dir(voice_root_, LV_GRAD_DIR_NONE, 0);
+    lv_obj_set_style_bg_opa(voice_root_, LV_OPA_COVER, 0);
     lv_obj_set_size(voice_root_, 360, 360);
     lv_obj_set_pos(voice_root_, 0, 0);
     lv_obj_set_style_pad_all(voice_root_, 0, 0);
@@ -923,7 +974,7 @@ void LcdDisplay::SetupUI() {
     auto screen = voice_root_;
     lv_obj_set_style_text_font(screen, text_font, 0);
     lv_obj_set_style_text_color(screen, lvgl_theme->text_color(), 0);
-    lv_obj_set_style_bg_color(screen, lvgl_theme->background_color(), 0);
+    lv_obj_set_style_bg_color(screen, lv_color_hex(0x000000), 0);
 
     /* Container - used as background */
     container_ = lv_obj_create(screen);
@@ -1090,31 +1141,17 @@ void LcdDisplay::SetupUI() {
 
 #ifdef CONFIG_APOLLO_CODEX_VOICE
     // Keep text inside the circle, away from the clipped top and bottom edges.
-    lv_obj_set_style_bg_color(screen, lv_color_hex(0x0C1220), 0);
-    lv_obj_set_style_bg_color(container_, lv_color_hex(0x0C1220), 0);
+    lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
+    lv_obj_set_style_bg_color(container_, lv_color_black(), 0);
     lv_obj_remove_flag(container_, static_cast<lv_obj_flag_t>(LV_OBJ_FLAG_SCROLLABLE | LV_OBJ_FLAG_CLICKABLE));
     lv_obj_set_style_text_color(status_label_, lv_color_white(), 0);
     lv_obj_set_style_text_color(notification_label_, lv_color_white(), 0);
     lv_obj_set_style_text_color(chat_message_label_, lv_color_white(), 0);
-    lv_obj_set_style_bg_opa(bottom_bar_, LV_OPA_TRANSP, 0);
-    lv_obj_set_width(top_bar_, 160);
-    lv_obj_align(top_bar_, LV_ALIGN_TOP_MID, 0, 24);
+    lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_add_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
-    // Activity updates resize the pill to its text, capped at 260px.
-    lv_obj_set_size(status_bar_, 220, 36);
-    lv_obj_align(status_bar_, LV_ALIGN_CENTER, 0, 4);
-    lv_obj_set_style_radius(status_bar_, 32, 0);
-    lv_obj_set_style_bg_color(status_bar_, lv_color_hex(0x303346), 0);
-    lv_obj_set_style_bg_opa(status_bar_, LV_OPA_80, 0);
-    lv_obj_set_size(status_label_, 200, 24);
-    lv_obj_set_size(notification_label_, 200, 24);
-    lv_label_set_long_mode(status_label_, LV_LABEL_LONG_DOT);
-    lv_label_set_long_mode(notification_label_, LV_LABEL_LONG_DOT);
-    // Leave space between the orb, captions, and call controls.
-    lv_obj_set_size(bottom_bar_, 190, 26);
-    lv_obj_align(bottom_bar_, LV_ALIGN_BOTTOM_MID, 0, -24);
-    lv_obj_set_size(chat_message_label_, 184, 24);
-    lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_SCROLL);
+    lv_obj_add_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
+    const auto initial_caption = CaptionForDeviceState(Application::GetInstance().GetDeviceState(), false);
+    UpdateVoiceStateCaption(initial_caption.text, initial_caption.color);
 
     // One small connector icon beside the activity text.
     voice_status_icon_ = lv_obj_create(status_bar_);
@@ -1136,12 +1173,14 @@ void LcdDisplay::SetupUI() {
     lv_obj_add_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);
     lv_obj_set_size(emoji_box_, voice_geometry::kOrbSize, voice_geometry::kOrbSize);
     lv_obj_align(emoji_box_, LV_ALIGN_CENTER, 0, 4);
-    lv_obj_set_style_radius(emoji_box_, LV_RADIUS_CIRCLE, 0);
-    lv_obj_set_style_clip_corner(emoji_box_, true, 0);
-    lv_obj_set_style_bg_opa(emoji_box_, LV_OPA_COVER, 0);
-    lv_obj_set_style_bg_color(emoji_box_, lv_color_hex(0x7465EB), 0);
-    lv_obj_set_style_bg_grad_color(emoji_box_, lv_color_hex(0xD9EFFF), 0);
-    lv_obj_set_style_bg_grad_dir(emoji_box_, LV_GRAD_DIR_VER, 0);
+    lv_obj_set_style_radius(emoji_box_, 0, 0);
+    lv_obj_set_style_clip_corner(emoji_box_, false, 0);
+    lv_obj_set_style_bg_opa(emoji_box_, LV_OPA_TRANSP, 0);
+    /* The canvas and screen share one black field, so the character appears
+     * directly on the page without the old orb silhouette behind it. */
+    lv_obj_set_style_bg_color(emoji_box_, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_grad_color(emoji_box_, lv_color_hex(0x000000), 0);
+    lv_obj_set_style_bg_grad_dir(emoji_box_, LV_GRAD_DIR_NONE, 0);
 
     const size_t orb_buffer_size = static_cast<size_t>(voice_geometry::kOrbSize) *
                                    voice_geometry::kOrbSize * sizeof(lv_color16_t);
@@ -1158,9 +1197,11 @@ void LcdDisplay::SetupUI() {
                                  voice_geometry::kOrbSize, LV_COLOR_FORMAT_RGB565);
             lv_obj_set_size(voice_orb_canvas_, voice_geometry::kOrbSize, voice_geometry::kOrbSize);
             lv_obj_align(voice_orb_canvas_, LV_ALIGN_CENTER, 0, 0);
-            lv_obj_set_style_radius(voice_orb_canvas_, LV_RADIUS_CIRCLE, 0);
-            lv_obj_set_style_clip_corner(voice_orb_canvas_, true, 0);
-            lv_obj_set_style_image_opa(voice_orb_canvas_, LV_OPA_50, 0);
+            lv_obj_set_style_radius(voice_orb_canvas_, 0, 0);
+            lv_obj_set_style_clip_corner(voice_orb_canvas_, false, 0);
+            /* Opaque. The orb could afford to be half-transparent over its own
+             * gradient; a face cannot - it was coming out washed out. */
+            lv_obj_set_style_image_opa(voice_orb_canvas_, LV_OPA_COVER, 0);
             lv_obj_remove_flag(voice_orb_canvas_, LV_OBJ_FLAG_SCROLLABLE);
             RenderVoiceOrb(0.0f);
             voice_orb_timer_ = lv_timer_create(
@@ -1188,7 +1229,11 @@ void LcdDisplay::SetupUI() {
         lv_obj_set_pos(button, index == 0 ? voice_geometry::kMuteLeft : voice_geometry::kEndLeft,
                        voice_geometry::kButtonTop);
         lv_obj_set_style_radius(button, LV_RADIUS_CIRCLE, 0);
-        lv_obj_set_style_bg_color(button, lv_color_hex(0x292929), 0);
+        /* Mic and hang-up. The mic keeps the dark disc the user likes; hang-up
+         * is red, because it is the one control that ends something. Both use
+         * 0x1A1A1A rather than the old 0x292929 so they match the disc the
+         * back arrow and the three dots sit in. */
+        lv_obj_set_style_bg_color(button, lv_color_hex(index == 0 ? 0x1A1A1A : 0xE5484D), 0);
         lv_obj_set_style_border_width(button, 0, 0);
         lv_obj_set_style_pad_all(button, 0, 0);
         lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
@@ -1231,29 +1276,26 @@ void LcdDisplay::SetupUI() {
         });
     for (int i = 0; i < 2; ++i) {
         auto b = lv_obj_create(screen);
-        lv_obj_set_pos(b, i == 0 ? 62 : 246, 62);
-        lv_obj_set_size(b, 52, 52);
+        lv_obj_set_pos(b, i == 0 ? 52 : 264, 74);
+        lv_obj_set_size(b, 44, 44);
         lv_obj_set_style_radius(b, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_pad_all(b, 0, 0);
         lv_obj_set_style_border_width(b, 0, 0);
-        lv_obj_set_style_bg_color(b, lv_color_hex(0x181F2C), 0);
+        lv_obj_set_style_bg_color(b, lv_color_hex(0x1A1A1A), 0);
         lv_obj_remove_flag(b, LV_OBJ_FLAG_SCROLLABLE);
         auto icon = lv_image_create(b);
-        lv_image_set_src(icon, i == 0 ? &watch_icons::home : &watch_icons::more);
+        lv_image_set_src(icon, i == 0 ? &watch_icons::back : &watch_icons::more);
         lv_obj_set_style_image_recolor(icon, lv_color_white(), 0);
         lv_obj_set_style_image_recolor_opa(icon, LV_OPA_COVER, 0);
         lv_obj_center(icon);
         lv_obj_add_event_cb(b, [](lv_event_t* e) {
             auto self = static_cast<LcdDisplay*>(lv_event_get_user_data(e));
-            const bool home = lv_obj_get_x(static_cast<lv_obj_t*>(lv_event_get_target(e))) == 62;
+            const bool home = lv_obj_get_x(static_cast<lv_obj_t*>(lv_event_get_target(e))) == 52;
             if (home) Application::GetInstance().OnWatchAction(WatchUi::Action::EndCall, 0, "", "");
             self->watch_ui_->Show(home ? WatchUi::Page::Home : WatchUi::Page::CodexSettings);
             Application::GetInstance().OnWatchAction(WatchUi::Action::Refresh, 0, "", "");
         }, LV_EVENT_CLICKED, this);
     }
-    voice_clock_ = lv_label_create(screen);
-    lv_label_set_text(voice_clock_, "--:--");
-    lv_obj_align(voice_clock_, LV_ALIGN_TOP_MID, 0, 26);
     lv_obj_add_event_cb(emoji_box_, [](lv_event_t*) {
         Application::GetInstance().OnWatchAction(WatchUi::Action::OpenVoice, 0, "", "");
     }, LV_EVENT_CLICKED, this);
@@ -1330,7 +1372,11 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
         if (content == nullptr || content[0] == '\0') {
             lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
         } else if (!hide_subtitle_) {
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+            lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
+#else
             lv_obj_remove_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
+#endif
         }
     }
 #if CONFIG_USE_MULTILINE_CHAT_MESSAGE && !defined(CONFIG_APOLLO_CODEX_VOICE)
@@ -1400,7 +1446,7 @@ void LcdDisplay::ShowVoiceModels(const std::vector<std::string>& names, size_t p
         lv_obj_set_pos(button, voice_geometry::kModelRowLeft,
                        voice_geometry::kModelRowTop + row * voice_geometry::kModelRowStep);
         lv_obj_set_size(button, voice_geometry::kModelRowWidth, voice_geometry::kModelRowHeight);
-        lv_obj_set_style_bg_color(button, lv_color_hex(0x292929), 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(0x1A1A1A), 0);
         lv_obj_set_style_border_width(button, 0, 0);
         lv_obj_set_style_pad_all(button, 0, 0);
         lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
@@ -1420,7 +1466,7 @@ void LcdDisplay::ShowVoiceModels(const std::vector<std::string>& names, size_t p
         lv_obj_set_style_radius(button, LV_RADIUS_CIRCLE, 0);
         lv_obj_set_style_pad_all(button, 0, 0);
         lv_obj_set_style_border_width(button, 0, 0);
-        lv_obj_set_style_bg_color(button, lv_color_hex(0x292929), 0);
+        lv_obj_set_style_bg_color(button, lv_color_hex(0x1A1A1A), 0);
         lv_obj_remove_flag(button, LV_OBJ_FLAG_SCROLLABLE);
         auto label = lv_label_create(button);
         lv_label_set_text(label, index == 0 ? "Back" : "Next");
@@ -1441,6 +1487,17 @@ static bool VoiceIconIsThinking(const char* activity) {
     };
     while (*activity == ' ' || *activity == '\t') ++activity;
     return eq_ci(activity, "thinking", 8) || eq_ci(activity, "reasoning", 9);
+}
+
+void LcdDisplay::UpdateVoiceStateCaption(const char* text, uint32_t color) {
+    if (voice_root_ == nullptr || text == nullptr) return;
+    if (voice_state_caption_ != nullptr && voice_state_caption_text_ == text &&
+        voice_state_caption_color_ == color) return;
+    if (voice_state_caption_ != nullptr) lv_obj_delete(voice_state_caption_);
+    dm_style_t style = {3, 2, 1, color, 0x101010};
+    voice_state_caption_ = dm_text_center(voice_root_, 180, 42, text, &style);
+    voice_state_caption_text_ = text;
+    voice_state_caption_color_ = color;
 }
 
 
@@ -1469,6 +1526,9 @@ void LcdDisplay::SetVoiceActivity(const char* activity, const char* icon, const 
         voice_tool_active_ = false;
         SetStatus(Lang::Strings::LISTENING);
         return;
+    }
+    if (VoiceIconIsThinking(activity)) {
+        UpdateVoiceStateCaption("THINKING", kVoiceAmber);
     }
     voice_tool_active_ = !VoiceIconIsThinking(activity) && strcmp(activity, "Answering…") != 0;
     lv_label_set_text(voice_status_text_, activity);
@@ -1510,12 +1570,29 @@ void LcdDisplay::SetVoiceMicrophoneMuted(bool muted) {
         return;
     }
     lv_label_set_text(voice_mute_icon_, muted ? MATERIAL_SYMBOLS_MIC_OFF : MATERIAL_SYMBOLS_MIC);
-    lv_obj_set_style_bg_color(voice_mute_button_, lv_color_hex(muted ? 0xA52C3D : 0x292929), 0);
+    lv_obj_set_style_bg_color(voice_mute_button_, lv_color_hex(muted ? 0xA52C3D : 0x1A1A1A), 0);
+    if (Application::GetInstance().GetDeviceState() == kDeviceStateListening) {
+        const auto caption = CaptionForDeviceState(kDeviceStateListening, muted);
+        UpdateVoiceStateCaption(caption.text, caption.color);
+    }
+}
+
+void LcdDisplay::SetVoiceCharacter(int shape, int colour) {
+    DisplayLockGuard lock(this);
+    voice_shape_ = std::clamp(shape, 0, voice_character::kShapeCount - 1);
+    voice_colour_ = std::clamp(colour, 0, voice_character::kColorCount - 1);
+    RenderVoiceOrb(static_cast<float>(lv_tick_elaps(voice_orb_started_at_)) / 1000.0f);
 }
 
 void LcdDisplay::SetStatus(const char* status) {
     DisplayLockGuard lock(this);
     const bool mic_muted = Application::GetInstance().GetAudioService().IsMicrophoneMuted();
+    if (!voice_tool_active_ || strcmp(status, Lang::Strings::SPEAKING) == 0 ||
+        strcmp(status, Lang::Strings::STANDBY) == 0 ||
+        strcmp(status, Lang::Strings::ERROR) == 0) {
+        const auto caption = CaptionForDeviceState(Application::GetInstance().GetDeviceState(), mic_muted);
+        UpdateVoiceStateCaption(caption.text, caption.color);
+    }
     // When muted we must not say "Listening" on the pill, but an active tool
     // caption still owns the pill — don't overwrite it.
     const char* pill_status = status;
@@ -1566,8 +1643,7 @@ void LcdDisplay::SetStatus(const char* status) {
     const bool was_orb_active = voice_orb_active_;
     voice_orb_color_ = orb_color;
     voice_orb_active_ = orb_active;
-    lv_obj_set_style_bg_opa(emoji_box_, orb_active ? LV_OPA_COVER : LV_OPA_50, 0);
-    lv_obj_set_style_bg_color(emoji_box_, lv_color_hex(orb_color), 0);
+    lv_obj_set_style_bg_opa(emoji_box_, LV_OPA_TRANSP, 0);
     if (orb_active) {
         if (!was_orb_active) voice_orb_started_at_ = lv_tick_get();
         if (voice_orb_timer_ != nullptr) lv_timer_resume(voice_orb_timer_);
@@ -1587,60 +1663,46 @@ void LcdDisplay::SetStatus(const char* status) {
 void LcdDisplay::RenderVoiceOrb(float seconds) {
     if (voice_orb_canvas_ == nullptr || voice_orb_buffer_ == nullptr) return;
 
+    /* The character, not a fluid gradient. Ported from bloub (see
+     * main/display/bloub/) and drawn into the same 166px canvas the orb used.
+     * White on black keeps both colours swap-invariant, so nothing here has to
+     * care how the panel orders its 16-bit words. */
     const int size = voice_geometry::kOrbSize;
-    const float color_r = static_cast<float>((voice_orb_color_ >> 16) & 0xFF) / 255.0f;
-    const float color_g = static_cast<float>((voice_orb_color_ >> 8) & 0xFF) / 255.0f;
-    const float color_b = static_cast<float>(voice_orb_color_ & 0xFF) / 255.0f;
-    const float t = seconds * 0.22f;
-    const float drift_x = std::sin(t) + 0.6f * std::sin(t * 1.7f + 1.3f);
-    const float drift_y = std::cos(t * 0.8f) + 0.6f * std::cos(t * 1.3f + 2.1f);
-    const float light_r = FluidOrbMix(1.0f, color_r, 0.5f);
-    const float light_g = FluidOrbMix(1.0f, color_g, 0.5f);
-    const float light_b = FluidOrbMix(1.0f, color_b, 0.5f);
+    const uint16_t body = lv_color_to_u16(lv_color_hex(voice_character::kColors[voice_colour_]));
+    const lv_color16_t bg{};
+    const uint16_t back = *reinterpret_cast<const uint16_t*>(&bg);
 
-    // ponytail: sample a 100x100 grid and expand it to 2x2 pixels; full-resolution noise is
-    // needlessly expensive on the ESP32, and the display's 16-bit color already softens it.
-    for (int y = 0; y < size; y += kFluidOrbSampleStep) {
-        const float canvas_y = static_cast<float>(y) + 0.5f;
-        const float uv_y = 1.0f - canvas_y / static_cast<float>(size);
-        for (int x = 0; x < size; x += kFluidOrbSampleStep) {
-            const float uv_x = (static_cast<float>(x) + 0.5f) / static_cast<float>(size);
-            const float p_x = uv_x * 1.8f + drift_x * 0.7f;
-            const float p_y = uv_y + drift_y * 0.7f;
-            const float q_x = FluidOrbFbm(p_x + drift_x, p_y + drift_y);
-            const float q_y = FluidOrbFbm(p_x + 3.2f - drift_x, p_y + 1.5f - drift_y);
-            const float noise = FluidOrbFbm(p_x + 1.2f * q_x, p_y + 1.2f * q_y);
-            const float base = std::clamp(1.0f - uv_y, 0.0f, 1.0f);
-            const float anchor = FluidOrbSmoothStep(0.0f, 0.3f, uv_y);
-            const float shade = std::clamp(base + (noise - 0.5f) * 0.8f * anchor, 0.0f, 1.0f);
+    /* Idle life: the blink schedule and the gaze drift, both pure functions of
+     * the time this screen has been up. */
+    const bloub_liveliness_t life = bloub_liveliness(seconds, 1.0f, true, true);
+    /* Facing the user. bloub's rest gaze is a three-quarter view measured off
+     * the reference video, which reads as looking off to one side on a device
+     * that is meant to be looking at whoever is in front of it. */
+    static const bloub_gaze_t kAttentive = { 4.0f, 5.0f, -4.0f };
+    bloub_gaze_t gaze = kAttentive;
+    gaze.yaw += life.d_yaw;
+    gaze.pitch += life.d_pitch;
+    gaze.roll += life.d_roll;
 
-            float red = FluidOrbMix(1.0f, light_r, FluidOrbSmoothStep(0.28f, 0.52f, shade));
-            float green = FluidOrbMix(1.0f, light_g, FluidOrbSmoothStep(0.28f, 0.52f, shade));
-            float blue = FluidOrbMix(1.0f, light_b, FluidOrbSmoothStep(0.28f, 0.52f, shade));
-            const float dark_mix = FluidOrbSmoothStep(0.58f, 0.88f, shade);
-            red = FluidOrbMix(red, color_r, dark_mix);
-            green = FluidOrbMix(green, color_g, dark_mix);
-            blue = FluidOrbMix(blue, color_b, dark_mix);
-
-            const float dx = uv_x - 0.5f;
-            const float dy = uv_y - 0.5f;
-            const float edge = FluidOrbSmoothStep(0.5f, 0.49f, std::sqrt(dx * dx + dy * dy));
-            lv_color16_t pixel{};
-            pixel.blue = static_cast<uint16_t>(
-                             std::clamp(blue * edge, 0.0f, 1.0f) * 255.0f) >> 3;
-            pixel.green = static_cast<uint16_t>(
-                              std::clamp(green * edge, 0.0f, 1.0f) * 255.0f) >> 2;
-            pixel.red = static_cast<uint16_t>(
-                            std::clamp(red * edge, 0.0f, 1.0f) * 255.0f) >> 3;
-
-            for (int block_y = 0; block_y < kFluidOrbSampleStep && y + block_y < size; ++block_y) {
-                for (int block_x = 0; block_x < kFluidOrbSampleStep && x + block_x < size;
-                     ++block_x) {
-                    voice_orb_buffer_[(y + block_y) * size + x + block_x] = pixel;
-                }
-            }
-        }
+    bloub_face_cfg_t face;
+    memset(&face, 0, sizeof(face));
+    face.radii = SHAPE_PROFILES[voice_shape_];
+    face.gaze = &gaze;
+    face.split = 16.0f;
+    /* Nearly filling its canvas: bloub's face is the whole device, not a small
+     * puck in the middle of one. */
+    face.scale = static_cast<float>(size) * 0.46f;
+    face.cx = face.cy = static_cast<float>(size) * 0.5f;
+    face.sx = face.sy = 1.0f;
+    face.eye_alpha = 1.0f;
+    for (int e = 0; e < 2; e++) {
+        face.eyes[e].w = 0.21f;      /* the resting expression's eye, from bloub */
+        face.eyes[e].h = 0.44f;
+        face.eyes[e].open = bloub_blink_scale(life.lid);
     }
+
+    memset(voice_orb_buffer_, 0, sizeof(lv_color16_t) * static_cast<size_t>(size) * size);
+    bloub_draw_face(reinterpret_cast<uint16_t*>(voice_orb_buffer_), size, size, &face, body, back);
     lv_obj_invalidate(voice_orb_canvas_);
 }
 #endif
@@ -1879,7 +1941,7 @@ void LcdDisplay::SetTheme(Theme* theme) {
     // Update low battery popup
     lv_obj_set_style_bg_color(low_battery_popup_, lvgl_theme->low_battery_color(), 0);
 
-    lv_obj_set_style_bg_color(container_, lv_color_hex(0x0C1220), 0);
+    lv_obj_set_style_bg_color(container_, lv_color_hex(0x000000), 0);
     lv_obj_set_style_bg_image_src(container_, nullptr, 0);
     lv_obj_set_style_text_color(voice_root_, lv_color_white(), 0);
     lv_obj_set_style_text_color(status_label_, lv_color_white(), 0);

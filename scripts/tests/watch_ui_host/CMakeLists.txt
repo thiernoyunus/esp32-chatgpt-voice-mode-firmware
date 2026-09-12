@@ -27,6 +27,8 @@ add_executable(watch_ui_test
     test_host_main.cc
     "${FW_DIR}/main/display/watch_ui.cc"
     "${FW_DIR}/main/display/watch_icons.cc"
+    "${FW_DIR}/main/display/bloub/bloub_face.c"
+    "${FW_DIR}/main/display/bloub/bloub_shapes.c"
     "${SIM_DIR}/hal/display_driver.c"
     "${SIM_DIR}/export/screenshot.c"
 )
