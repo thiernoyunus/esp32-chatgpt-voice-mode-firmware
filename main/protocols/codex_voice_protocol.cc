@@ -40,7 +40,14 @@ bool AtOrAfter(uint32_t sample, uint32_t since) {
     return static_cast<int32_t>(sample - since) >= 0;
 }
 constexpr uint32_t kAudioLogBurstGapMs = 250;
-constexpr size_t kMinimumVoiceAudioBytes = 3;
+/* Opus sends 1-3 byte DTX/comfort-noise frames when there is nothing to say.
+ * At 3 they counted as speech, so a track carrying only silence looked alive
+ * to the stall check and to the retry budget below. Real 20ms speech at 16kHz
+ * is tens of bytes; 10 clears comfort noise without clipping quiet syllables. */
+constexpr size_t kMinimumVoiceAudioBytes = 10;
+/* Consecutive silent calls to rebuild before handing it back to the user. Each
+ * attempt costs kInboundAudioStallMs, so this is seconds, not minutes. */
+constexpr int kMaxStallRetries = 3;
 
 std::string BuildConnectionUrl(const std::string& base_url, const std::string& device_id,
                                const std::string& token) {
@@ -782,7 +789,14 @@ void CodexVoiceProtocol::CheckInboundAudioStall() {
     }
     ESP_LOGE(TAG, "No reply audio for %lu ms; restarting the voice call",
              (unsigned long)(now - quiet_since));
-    Fail("Apollo's voice stopped coming through. Reconnecting.");
+    if (stall_retries_.fetch_add(1) < kMaxStallRetries) {
+        stall_recovery_.store(true);
+        Fail("Apollo's voice stopped coming through. Reconnecting.");
+    } else {
+        // Out of retries. Say what is actually true rather than promising a
+        // reconnect that is not coming.
+        Fail("Apollo's voice isn't coming through. Tap to try again.");
+    }
 }
 
 int CodexVoiceProtocol::OnPeerState(esp_peer_state_t state, void* context) {
@@ -836,6 +850,9 @@ int CodexVoiceProtocol::OnPeerAudio(esp_peer_audio_frame_t* frame, void* context
     ++received_frames;
     if (is_real_audio) {
         ++real_audio_frames;
+        // A reply arrived, so the run of silent calls is over and the next
+        // stall gets a full budget again.
+        protocol->stall_retries_.store(0);
         // Only the timestamp. This runs on the WebRTC callback, which knows
         // nothing about which reply the frame belongs to - the stall check
         // compares this against when it started listening and draws its own

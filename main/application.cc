@@ -226,7 +226,13 @@ void Application::Run() {
         auto bits = xEventGroupWaitBits(event_group_, ALL_EVENTS, pdTRUE, pdFALSE, portMAX_DELAY);
 
         if (bits & MAIN_EVENT_ERROR) {
+            // A reply transcribed but never heard is the one failure a fresh
+            // call fixes, and the message already promised it. Nothing did it.
+            bool reopen = false;
 #ifdef CONFIG_APOLLO_CODEX_VOICE
+            if (auto* voice = dynamic_cast<CodexVoiceProtocol*>(protocol_.get())) {
+                reopen = voice->TakeStallRecovery() && !call_end_requested_.load();
+            }
             if (protocol_) {
                 protocol_->CloseAudioChannel();
             }
@@ -237,8 +243,21 @@ void Application::Run() {
             // next loop pass erases the very message this event exists to show.
             xEventGroupClearBits(event_group_, MAIN_EVENT_STATE_CHANGED);
             HandleStateChangedEvent();
-            Alert(Lang::Strings::ERROR, last_error_message_.c_str(), "cancel",
-                  Lang::Sounds::OGG_EXCLAMATION);
+            if (reopen) {
+                ESP_LOGW(TAG, "Reply audio stalled; reopening the call");
+                // Idle is the state HandleToggleChatEvent opens a call from,
+                // and it is the state we just landed in. The flag is checked
+                // again inside: this runs a loop pass later, the UI task can
+                // hang up in between, and HandleToggleChatEvent clears it.
+                Schedule([this]() {
+                    if (!call_end_requested_.load()) {
+                        HandleToggleChatEvent();
+                    }
+                });
+            } else {
+                Alert(Lang::Strings::ERROR, last_error_message_.c_str(), "cancel",
+                      Lang::Sounds::OGG_EXCLAMATION);
+            }
         }
 
         if (bits & MAIN_EVENT_NETWORK_CONNECTED) {
