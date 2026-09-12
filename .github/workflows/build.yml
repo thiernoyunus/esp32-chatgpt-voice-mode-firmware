@@ -6,6 +6,10 @@
 name: Build Boards
 
 on:
+  # Manual runs matter here: this repo is a fork, and a fork's automatic
+  # triggers stay off until Actions is enabled once from the Actions tab.
+  # Until then this is the only way to get the board built by CI at all.
+  workflow_dispatch:
   pull_request:
     branches:
       - main
