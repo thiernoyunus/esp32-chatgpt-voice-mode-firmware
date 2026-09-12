@@ -48,3 +48,33 @@ static inline float bloub_rng(uint32_t* state) {
     t = (t + (t ^ (t >> 7)) * (61u | t)) ^ t;
     return (float)((t ^ (t >> 14)) / 4294967296.0);
 }
+
+/* The hue wheel the rings are coloured from, as RGB565. Pastel by
+ * construction: bloub fixes saturation at 0.55 and lightness at 0.62, which is
+ * why the rings read as colour without ever fighting the character. */
+static inline uint16_t bloub_wheel565(float hue_deg) {
+    float h = fmodf(hue_deg, 360.0f);
+    if (h < 0.0f) h += 360.0f;
+    const float c = (1.0f - fabsf(2.0f * 0.62f - 1.0f)) * 0.55f;
+    const float x = c * (1.0f - fabsf(fmodf(h / 60.0f, 2.0f) - 1.0f));
+    const float m = 0.62f - c / 2.0f;
+    float r, g, b;
+    if (h < 60) { r = c; g = x; b = 0; }
+    else if (h < 120) { r = x; g = c; b = 0; }
+    else if (h < 180) { r = 0; g = c; b = x; }
+    else if (h < 240) { r = 0; g = x; b = c; }
+    else if (h < 300) { r = x; g = 0; b = c; }
+    else { r = c; g = 0; b = x; }
+    return (uint16_t)((uint16_t)((r + m) * 31.0f + 0.5f) << 11 |
+                      (uint16_t)((g + m) * 63.0f + 0.5f) << 5 |
+                      (uint16_t)((b + m) * 31.0f + 0.5f));
+}
+
+/* Blends `src` over `dst` by `a` (0-255), in RGB565. */
+static inline uint16_t bloub_blend565(uint16_t dst, uint16_t src, uint32_t a) {
+    const uint32_t inv = 255u - a;
+    const uint32_t r = ((((dst >> 11) & 0x1F) * inv + ((src >> 11) & 0x1F) * a) + 128u) >> 8;
+    const uint32_t g = ((((dst >> 5) & 0x3F) * inv + ((src >> 5) & 0x3F) * a) + 128u) >> 8;
+    const uint32_t b = (((dst & 0x1F) * inv + (src & 0x1F) * a) + 128u) >> 8;
+    return (uint16_t)((r << 11) | (g << 5) | b);
+}

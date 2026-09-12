@@ -2,6 +2,8 @@
 #include "bloub/bloub_shapes.h"   /* the character */
 #include "voice_character.h"        /* the palette and counts it is worn in */
 #include "bloub/bloub_face.h"
+#include "bloub/bloub_decor.h" /* the rings it connects inside */
+#include "bloub/bloub_states.h" /* what it does while the agent works */
 #include "assets/lang_config.h"
 #include "gif/lvgl_gif.h"
 #include "lvgl_theme.h"
@@ -40,7 +42,10 @@ LV_FONT_DECLARE(font_noto_emoji_30_4);
 #ifdef CONFIG_APOLLO_CODEX_VOICE
 namespace {
 // Fluid shading ported from Rare UI's Fluid Orb: https://www.rareui.com/components/fluidorb
-constexpr uint32_t kFluidOrbFramePeriodMs = 66;
+// 30fps. The face alone was fine at 15 - it only blinks and drifts - but
+// orbit turns the whole body at 1.25 turns a second, which at 15 arrives in
+// 30-degree steps and reads as stuttering rather than spinning.
+constexpr uint32_t kFluidOrbFramePeriodMs = 33;
 constexpr int kFluidOrbSampleStep = 2;
 
 constexpr uint32_t kVoiceGreen = 0x30C46E;
@@ -48,9 +53,43 @@ constexpr uint32_t kVoiceCyan = 0x2FD8E8;
 constexpr uint32_t kVoiceAmber = 0xF5A524;
 constexpr uint32_t kVoiceRed = 0xE5484D;
 constexpr uint32_t kVoiceGray = 0x8E8E93;
-
 static_assert(voice_character::kShapeCount == static_cast<int>(SHAPE_COUNT),
               "the picker's shape count and bloub's silhouette table have drifted apart");
+
+// The state word's own slot: top edge, and the size of the tool caption that
+// shares it. 17 characters is what fits beside an icon at this size on a round
+// 360px screen - "CHECKING CALENDAR" exactly, and anything longer is cut.
+constexpr int kVoiceCaptionTop = 42;
+constexpr int kVoiceToolIconSize = 20;
+constexpr size_t kVoiceToolMaxChars = 17;
+// How long a named tool keeps the slot before a plain "Thinking" may take it.
+// The server announces a tool when the call STARTS and says "Thinking" again
+// the moment it finishes, so a quick lookup would otherwise flash past unread
+// - and its logo, which arrives in a later message once it has been fetched,
+// would land after the caption it belongs to had already gone.
+constexpr uint32_t kVoiceToolHoldMs = 1500;
+// bloub hands orbit back over a 0.6s cross-fade. The character shrinks to
+// 0.68 while the rings are up: they reach about 1.4 times its radius, which at
+// resting size would run off this canvas - shrinking the character and the
+// rings together keeps bloub's proportion and its motion exactly.
+constexpr uint32_t kOrbitExitMs = 600;
+constexpr float kOrbitScale = 0.68f;
+// What he does while the agent is working. bloub plays its whole catalogue in
+// order; this is the part of it that reads as activity rather than as a
+// notification, a problem, or sleep - see bloub_states.h.
+// BLOUB_STATE_PLAY is ported but not in the cycle: its swoosh sweeps out past
+// 1.8 body radii, wider than this canvas, and the character would have to
+// shrink by nearly half mid-cycle to make room for it.
+constexpr bloub_state_id_t kWorkingCycle[] = {
+    BLOUB_STATE_THINKING, BLOUB_STATE_WINK,    BLOUB_STATE_HEXAGON,
+    BLOUB_STATE_THINKING, BLOUB_STATE_WIDE,    BLOUB_STATE_EGG,
+};
+constexpr int kWorkingCycleLength = sizeof(kWorkingCycle) / sizeof(kWorkingCycle[0]);
+// The state being left, frozen at the moment it ended, for the cross-fade to
+// read from. File scope rather than a member because bloub_shapes.h defines
+// its profile tables inline: including it from lcd_display.h would copy them
+// into every translation unit. There is one call screen, on one task.
+bloub_pose_t s_pose_leaving{};
 
 struct VoiceStateCaption {
     const char* text;
@@ -72,7 +111,10 @@ VoiceStateCaption CaptionForDeviceState(DeviceState state, bool muted) {
         case kDeviceStateAudioTesting: return {"TESTING", kVoiceAmber};
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
-        default: return {"READY", kVoiceGray};
+        // Idle here is not a status, it is the thing to do next: tapping the
+        // character starts a call. 11 characters at this size is 195px, inside
+        // the 240 the round screen gives at that height.
+        default: return {"TAP TO WAKE", kVoiceGray};
     }
 }
 
@@ -958,6 +1000,12 @@ void LcdDisplay::SetupUI() {
         voice_colour_ = std::clamp<int32_t>(character.GetInt("voice_colour", 0), 0,
                                            voice_character::kColorCount - 1);
     }
+    {
+        // The captions toggle has to be read back here too, or turning them
+        // off would only last until the next boot.
+        Settings voice("codex_voice", false);
+        hide_subtitle_ = !voice.GetBool("captions", true);
+    }
     /* Black, like every other screen the character appears on. The voice screen
      * used to be navy, which left the character sitting in a black square on a
      * dark blue page - two different darks, and the square was the seam. */
@@ -1147,27 +1195,46 @@ void LcdDisplay::SetupUI() {
     lv_obj_set_style_text_color(status_label_, lv_color_white(), 0);
     lv_obj_set_style_text_color(notification_label_, lv_color_white(), 0);
     lv_obj_set_style_text_color(chat_message_label_, lv_color_white(), 0);
-    lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
+    /* The transcript: what was said, and what came back. The mockup layout
+     * dropped it, but the words are still arriving - so it gets its strip back
+     * below the call buttons, and SetChatMessage shows it when there is
+     * something to show.
+     *
+     * 180 wide rather than the old 190: this sits low on a round screen, where
+     * the usable width is only about 185, and the old strip's corners were
+     * outside the glass. Long lines scroll sideways rather than wrap - there
+     * is one line of room here, not two.
+     *
+     * The label's height is its text's, not a number picked to look right: a
+     * label shorter than one line of its own font makes LVGL scroll the text
+     * UP AND DOWN to show the rest of it, which is what the caption bouncing
+     * was. Its own padding goes to zero for the same reason - padding comes
+     * out of the height the text is measured against.
+     *
+     * Circular rather than plain SCROLL for the sideways travel: plain SCROLL
+     * is LVGL's back-and-forth mode, and it is the mode that owns that
+     * vertical animation at all. Circular only ever travels one way. */
+    lv_obj_set_size(bottom_bar_, 180, 28);
+    lv_obj_align(bottom_bar_, LV_ALIGN_BOTTOM_MID, 0, -28);
+    lv_obj_set_style_bg_opa(bottom_bar_, LV_OPA_TRANSP, 0);
+    lv_obj_set_style_pad_all(bottom_bar_, 0, 0);
+    lv_obj_set_style_pad_all(chat_message_label_, 0, 0);
+    lv_obj_set_size(chat_message_label_, 174, LV_SIZE_CONTENT);
+    lv_label_set_long_mode(chat_message_label_, LV_LABEL_LONG_SCROLL_CIRCULAR);
+    lv_obj_align(chat_message_label_, LV_ALIGN_CENTER, 0, 0);
+    lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);  // until there is something said
     lv_obj_add_flag(top_bar_, LV_OBJ_FLAG_HIDDEN);
+    /* The pill that names what the agent is doing - "Searching email", with
+     * that connector's own icon. The mockup layout dropped the old
+     * "Listening..." pill and hid this bar with it, which took the tool
+     * caption and the plugin icon down too. The bar stays gone - it was the
+     * old rounded chip, in the old typeface, and the redesign was right about
+     * it. The tool caption is rebuilt below out of the same dot-matrix text
+     * the state word is made of, in the state word's own slot. */
     lv_obj_add_flag(status_bar_, LV_OBJ_FLAG_HIDDEN);
     const auto initial_caption = CaptionForDeviceState(Application::GetInstance().GetDeviceState(), false);
     UpdateVoiceStateCaption(initial_caption.text, initial_caption.color);
 
-    // One small connector icon beside the activity text.
-    voice_status_icon_ = lv_obj_create(status_bar_);
-    lv_obj_set_size(voice_status_icon_, 24, 32);
-    lv_obj_align(voice_status_icon_, LV_ALIGN_LEFT_MID, 8, 0);
-    lv_obj_set_style_bg_opa(voice_status_icon_, LV_OPA_TRANSP, 0);
-    lv_obj_set_style_border_width(voice_status_icon_, 0, 0);
-    lv_obj_set_style_pad_all(voice_status_icon_, 0, 0);
-    lv_obj_remove_flag(voice_status_icon_, LV_OBJ_FLAG_SCROLLABLE);
-    voice_status_text_ = lv_label_create(status_bar_);
-    lv_obj_set_size(voice_status_text_, 168, 48);
-    lv_obj_align(voice_status_text_, LV_ALIGN_LEFT_MID, 36, 0);
-    lv_obj_set_style_text_color(voice_status_text_, lv_color_white(), 0);
-    lv_label_set_long_mode(voice_status_text_, LV_LABEL_LONG_DOT);
-    lv_label_set_text(voice_status_text_, "");
-    lv_obj_add_flag(voice_status_text_, LV_OBJ_FLAG_HIDDEN);
     voice_tool_active_ = false;
 
     lv_obj_add_flag(emoji_label_, LV_OBJ_FLAG_HIDDEN);
@@ -1207,16 +1274,19 @@ void LcdDisplay::SetupUI() {
             voice_orb_timer_ = lv_timer_create(
                 [](lv_timer_t* timer) {
                     auto display = static_cast<LcdDisplay*>(lv_timer_get_user_data(timer));
-                    if (display->voice_orb_active_ && !lv_obj_has_flag(display->voice_root_, LV_OBJ_FLAG_HIDDEN)) {
+                    /* Runs whenever the call screen is up, in a call or not:
+                     * the blink and the gaze drift are what stop him looking
+                     * switched off while he waits. */
+                    if (!lv_obj_has_flag(display->voice_root_, LV_OBJ_FLAG_HIDDEN)) {
                         display->RenderVoiceOrb(
                             static_cast<float>(lv_tick_elaps(display->voice_orb_started_at_)) /
                             1000.0f);
                     }
                 },
                 kFluidOrbFramePeriodMs, this);
-            if (voice_orb_timer_ != nullptr) {
-                lv_timer_pause(voice_orb_timer_);
-            }
+            // Left running: it costs nothing while the call screen is hidden,
+            // and it means he is already alive the first time it is opened,
+            // without waiting for a status to arrive and start him.
         } else {
             heap_caps_free(voice_orb_buffer_);
             voice_orb_buffer_ = nullptr;
@@ -1367,16 +1437,19 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
     }
     lv_anim_delete(chat_message_label_, nullptr);
     lv_label_set_text(chat_message_label_, content);
+#ifdef CONFIG_APOLLO_CODEX_VOICE
+    /* One line carries both halves of the conversation, so they have to be
+     * told apart by eye: the reply is what is being read out, so it is the one
+     * in white, and what was heard sits back in grey. */
+    lv_obj_set_style_text_color(chat_message_label_,
+                                lv_color_hex(strcmp(role, "user") == 0 ? kVoiceGray : 0xFFFFFF), 0);
+#endif
     // Show bottom_bar_ only when there is content (and subtitle is not globally hidden)
     if (bottom_bar_ != nullptr) {
         if (content == nullptr || content[0] == '\0') {
             lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
         } else if (!hide_subtitle_) {
-#ifdef CONFIG_APOLLO_CODEX_VOICE
-            lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
-#else
             lv_obj_remove_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
-#endif
         }
     }
 #if CONFIG_USE_MULTILINE_CHAT_MESSAGE && !defined(CONFIG_APOLLO_CODEX_VOICE)
@@ -1489,6 +1562,84 @@ static bool VoiceIconIsThinking(const char* activity) {
     return eq_ci(activity, "thinking", 8) || eq_ci(activity, "reasoning", 9);
 }
 
+/* The state word and the tool caption share one slot at the top of the call
+ * screen. Whichever is more specific wins: "Searching email" beats "THINKING",
+ * and when the tool is done the word comes back. */
+void LcdDisplay::ShowVoiceToolCaption(bool tool) {
+    if (voice_state_caption_ != nullptr) {
+        if (tool) lv_obj_add_flag(voice_state_caption_, LV_OBJ_FLAG_HIDDEN);
+        else lv_obj_remove_flag(voice_state_caption_, LV_OBJ_FLAG_HIDDEN);
+    }
+    if (!tool) ClearVoiceToolCaption();
+}
+
+/* Lets go of a tool caption that was being held open. */
+void LcdDisplay::ReleaseVoiceToolHold() {
+    if (voice_tool_hold_timer_ != nullptr) {
+        lv_timer_delete(voice_tool_hold_timer_);
+        voice_tool_hold_timer_ = nullptr;
+    }
+}
+
+void LcdDisplay::ClearVoiceToolCaption() {
+    if (voice_tool_text_ != nullptr) { lv_obj_delete(voice_tool_text_); voice_tool_text_ = nullptr; }
+    if (voice_tool_icon_ != nullptr) { lv_obj_delete(voice_tool_icon_); voice_tool_icon_ = nullptr; }
+    if (voice_activity_image_) {
+        lv_image_cache_drop(voice_activity_image_->image_dsc());
+        voice_activity_image_.reset();
+    }
+}
+
+/* Draws "Searching email" where the state word goes, in the state word's own
+ * dot-matrix face, with the connector's icon beside it.
+ *
+ * Its width comes out of dm_width rather than a clamp, so the old
+ * scripts/tests/test_voice_layout.py went with the pill it sized; what it was
+ * guarding - that the caption fits the screen - is now scripts/tests/caption_host,
+ * which renders this slot against the round boundary instead of asserting on
+ * numbers.
+ *
+ * One step smaller than the state word, and that is not a style choice: the
+ * screen is round, so at this height it is 240px wide, and a tool caption at
+ * the state word's size runs to nearly 300. Same typeface, one size down, is
+ * what fits. Longer captions are cut rather than allowed off the edge.
+ *
+ * The icon's place is held whether or not there is an icon yet. The server
+ * sends the words first and the connector's logo in a second message, once it
+ * has fetched and converted it - so laying the words out to fit the space they
+ * have now would shove them sideways when the logo turns up a moment later.
+ * They are laid out for the logo from the start, and it drops into the gap. */
+void LcdDisplay::UpdateVoiceToolCaption(const char* activity) {
+    if (voice_root_ == nullptr || activity == nullptr) return;
+    if (voice_tool_text_ != nullptr) { lv_obj_delete(voice_tool_text_); voice_tool_text_ = nullptr; }
+
+    /* The dot-matrix font is A-Z, digits and punctuation - it folds lowercase
+     * itself and draws anything else as a space. */
+    char text[kVoiceToolMaxChars + 1];
+    size_t n = 0;
+    for (const char* c = activity; *c != '\0' && n < kVoiceToolMaxChars; ++c) {
+        if (static_cast<unsigned char>(*c) < 0x80) text[n++] = *c;
+    }
+    while (n > 0 && text[n - 1] == ' ') --n;
+    text[n] = '\0';
+    if (n == 0) return;
+
+    dm_style_t style = {2, 1, 1, kVoiceAmber, 0x101010};
+    const int text_w = dm_width(text, &style);
+    const int icon_w = kVoiceToolIconSize;   // held even before the logo lands
+    const int gap = 8;
+    const int left = 180 - (icon_w + gap + text_w) / 2;
+    /* Both sit on the state word's own centre line, so the slot does not jump
+     * when one replaces the other. */
+    const int centre_y = kVoiceCaptionTop + DM_H * 3 / 2;
+    voice_tool_text_ = dm_text(voice_root_, left + icon_w + gap, centre_y - DM_H * 2 / 2, text,
+                               &style);
+    if (voice_tool_icon_ != nullptr) {
+        lv_obj_set_pos(voice_tool_icon_, left, centre_y - kVoiceToolIconSize / 2);
+        lv_obj_move_foreground(voice_tool_icon_);
+    }
+}
+
 void LcdDisplay::UpdateVoiceStateCaption(const char* text, uint32_t color) {
     if (voice_root_ == nullptr || text == nullptr) return;
     if (voice_state_caption_ != nullptr && voice_state_caption_text_ == text &&
@@ -1498,44 +1649,74 @@ void LcdDisplay::UpdateVoiceStateCaption(const char* text, uint32_t color) {
     voice_state_caption_ = dm_text_center(voice_root_, 180, 42, text, &style);
     voice_state_caption_text_ = text;
     voice_state_caption_color_ = color;
+    // Rebuilt from scratch each time, so it has to be put back behind the tool
+    // caption if one is up.
+    if (voice_tool_active_ && voice_state_caption_ != nullptr) {
+        lv_obj_add_flag(voice_state_caption_, LV_OBJ_FLAG_HIDDEN);
+    }
 }
 
 
-static void SizeVoicePill(lv_obj_t* bar, lv_obj_t* label, const char* text, bool has_icon) {
-    if (bar == nullptr || label == nullptr || text == nullptr) return;
-    lv_point_t size{};
-    lv_text_get_size(&size, text, lv_obj_get_style_text_font(label, LV_PART_MAIN), 0, 0,
-                     LV_COORD_MAX, LV_TEXT_FLAG_NONE);
-    const int icon_space = has_icon ? 32 : 0;
-    const int width = std::clamp(static_cast<int>(size.x) + 24 + icon_space, 100, 260);
-    lv_obj_set_width(bar, width);
-    lv_obj_set_size(label, width - 24 - icon_space, LV_SIZE_CONTENT);
-    lv_obj_align(label, LV_ALIGN_CENTER, icon_space / 2, 0);
-}
 
 void LcdDisplay::SetVoiceActivity(const char* activity, const char* icon, const char* pixels) {
     DisplayLockGuard lock(this);
-    if (voice_status_text_ == nullptr) return;
-    lv_obj_clean(voice_status_icon_);
-    if (voice_activity_image_) {
-        lv_image_cache_drop(voice_activity_image_->image_dsc());
-        voice_activity_image_.reset();
-    }
-    lv_obj_add_flag(voice_status_icon_, LV_OBJ_FLAG_HIDDEN);
+    if (voice_root_ == nullptr) return;
+    /* Nothing is torn down before the hold decision below: the branch that
+     * keeps a just-announced tool on screen does so by leaving it alone, and
+     * clearing up here deleted the very caption it was protecting - an empty
+     * slot for the whole 1.5s, since the state word stays hidden behind it. */
     if (activity == nullptr || activity[0] == '\0' || strcmp(activity, "Listening") == 0) {
+        ReleaseVoiceToolHold();
+        ClearVoiceToolCaption();
         voice_tool_active_ = false;
+        voice_working_ = false;
+        ShowVoiceToolCaption(false);
         SetStatus(Lang::Strings::LISTENING);
         return;
     }
-    if (VoiceIconIsThinking(activity)) {
-        UpdateVoiceStateCaption("THINKING", kVoiceAmber);
+    const bool named_tool = !VoiceIconIsThinking(activity) && strcmp(activity, "Answering…") != 0;
+    /* A tool that has just been announced keeps the slot for long enough to be
+     * read. Only a plain "Thinking" waits its turn - another named tool is
+     * real news and replaces it at once. */
+    if (!named_tool && voice_tool_active_ && voice_tool_hold_timer_ == nullptr) {
+        const uint32_t shown = lv_tick_elaps(voice_tool_shown_at_);
+        if (shown < kVoiceToolHoldMs) {
+            voice_working_ = strcmp(activity, "Answering…") != 0;
+            UpdateVoiceStateCaption("THINKING", kVoiceAmber);
+            voice_tool_hold_timer_ = lv_timer_create([](lv_timer_t* timer) {
+                auto* self = static_cast<LcdDisplay*>(lv_timer_get_user_data(timer));
+                self->ReleaseVoiceToolHold();
+                self->voice_tool_active_ = false;
+                self->ShowVoiceToolCaption(false);
+            }, kVoiceToolHoldMs - shown, this);
+            if (voice_tool_hold_timer_ != nullptr) {
+                lv_timer_set_repeat_count(voice_tool_hold_timer_, 1);
+                return;
+            }
+        }
     }
-    voice_tool_active_ = !VoiceIconIsThinking(activity) && strcmp(activity, "Answering…") != 0;
-    lv_label_set_text(voice_status_text_, activity);
-    lv_obj_remove_flag(voice_status_text_, LV_OBJ_FLAG_HIDDEN);
-    lv_obj_add_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
-    bool has_icon = false;
-    if (!VoiceIconIsThinking(activity) && pixels != nullptr && strlen(pixels) == 3072) {
+    /* Past the hold: whatever was up is either being replaced or is going
+     * away, so now it can go. */
+    ReleaseVoiceToolHold();
+    ClearVoiceToolCaption();
+    /* Only a named tool takes the slot: plain "Thinking" is already the state
+     * word, and saying it twice on one screen reads as a stutter. */
+    voice_tool_active_ = named_tool;
+    if (named_tool) voice_tool_shown_at_ = lv_tick_get();
+    /* Working covers thinking too - the character should be doing something
+     * from the first status right through to the answer, and "Thinking" is
+     * the one that arrives first. */
+    voice_working_ = strcmp(activity, "Answering…") != 0;
+    /* The word underneath stays truthful even while the tool caption covers
+     * it, so when a tool finishes the slot falls back to THINKING rather than
+     * to whatever was there before the turn started. */
+    UpdateVoiceStateCaption("THINKING", kVoiceAmber);
+    if (!voice_tool_active_) {
+        ShowVoiceToolCaption(false);
+        return;
+    }
+
+    if (pixels != nullptr && strlen(pixels) == 3072) {
         // One 24px BGRA icon; never decode a downloaded image on the device.
         auto data = static_cast<unsigned char*>(heap_caps_malloc(2304, MALLOC_CAP_8BIT));
         size_t size = 0;
@@ -1543,25 +1724,26 @@ void LcdDisplay::SetVoiceActivity(const char* activity, const char* icon, const 
                 reinterpret_cast<const unsigned char*>(pixels), 3072) == 0 && size == 2304) {
             voice_activity_image_ = std::make_unique<LvglAllocatedImage>(
                 data, size, 24, 24, 96, LV_COLOR_FORMAT_ARGB8888);
-            auto image = lv_image_create(voice_status_icon_);
-            lv_image_set_src(image, voice_activity_image_->image_dsc());
-            lv_obj_center(image);
-            has_icon = true;
+            voice_tool_icon_ = lv_image_create(voice_root_);
+            lv_image_set_src(voice_tool_icon_, voice_activity_image_->image_dsc());
+            // 24px artwork into the 20px the caption line leaves for it.
+            lv_image_set_scale(voice_tool_icon_, 256 * kVoiceToolIconSize / 24);
+            lv_obj_set_size(voice_tool_icon_, kVoiceToolIconSize, kVoiceToolIconSize);
         } else {
             heap_caps_free(data);
         }
     }
-    if (!has_icon && icon != nullptr && strcmp(icon, "search") == 0 &&
-        !VoiceIconIsThinking(activity)) {
-        auto label = lv_label_create(voice_status_icon_);
-        lv_obj_set_style_text_font(label, &BUILTIN_ICON_FONT, 0);
-        lv_obj_set_style_text_color(label, lv_color_white(), 0);
-        lv_label_set_text(label, MATERIAL_SYMBOLS_SEARCH);
-        lv_obj_center(label);
-        has_icon = true;
+    if (voice_tool_icon_ == nullptr && icon != nullptr && strcmp(icon, "search") == 0) {
+        voice_tool_icon_ = lv_label_create(voice_root_);
+        lv_obj_set_style_text_font(voice_tool_icon_, &BUILTIN_ICON_FONT, 0);
+        // Matches the caption beside it, and the state word it stands in for.
+        lv_obj_set_style_text_color(voice_tool_icon_, lv_color_hex(kVoiceAmber), 0);
+        lv_label_set_text(voice_tool_icon_, MATERIAL_SYMBOLS_SEARCH);
+        lv_obj_set_size(voice_tool_icon_, kVoiceToolIconSize, kVoiceToolIconSize);
+        lv_obj_set_style_text_align(voice_tool_icon_, LV_TEXT_ALIGN_CENTER, 0);
     }
-    if (has_icon) lv_obj_remove_flag(voice_status_icon_, LV_OBJ_FLAG_HIDDEN);
-    SizeVoicePill(status_bar_, voice_status_text_, activity, has_icon);
+    UpdateVoiceToolCaption(activity);
+    ShowVoiceToolCaption(true);
 }
 
 void LcdDisplay::SetVoiceMicrophoneMuted(bool muted) {
@@ -1606,18 +1788,13 @@ void LcdDisplay::SetStatus(const char* status) {
     if (strcmp(status, Lang::Strings::STANDBY) == 0 ||
         strcmp(status, Lang::Strings::ERROR) == 0 ||
         strcmp(status, Lang::Strings::SPEAKING) == 0) {
+        ReleaseVoiceToolHold();
         voice_tool_active_ = false;
+        voice_working_ = false;
     }
     if (!voice_tool_active_) {
         LvglDisplay::SetStatus(pill_status);
-        SizeVoicePill(status_bar_, status_label_, pill_status, false);
-        if (voice_status_text_ != nullptr) {
-            lv_obj_add_flag(voice_status_text_, LV_OBJ_FLAG_HIDDEN);
-            lv_obj_remove_flag(status_label_, LV_OBJ_FLAG_HIDDEN);
-        }
-        if (voice_status_icon_ != nullptr) {
-            lv_obj_add_flag(voice_status_icon_, LV_OBJ_FLAG_HIDDEN);
-        }
+        ShowVoiceToolCaption(false);
     }
     if (emoji_box_ == nullptr) {
         return;
@@ -1639,6 +1816,13 @@ void LcdDisplay::SetStatus(const char* status) {
             lv_obj_add_flag(voice_end_button_, LV_OBJ_FLAG_HIDDEN);
         }
     }
+    // Entering the handshake starts orbit; leaving it - connected, or the user
+    // gave up - starts the exit that takes the rings away.
+    if (connecting != voice_orb_connecting_) {
+        if (connecting) voice_orbit_started_at_ = lv_tick_get();
+        voice_orbit_exit_at_ = connecting ? 0 : lv_tick_get();
+        voice_orb_connecting_ = connecting;
+    }
     const uint32_t orb_color = strcmp(status, Lang::Strings::ERROR) == 0 ? 0xCF4B59 : 0x7465EB;
     const bool was_orb_active = voice_orb_active_;
     voice_orb_color_ = orb_color;
@@ -1652,12 +1836,47 @@ void LcdDisplay::SetStatus(const char* status) {
             lv_obj_set_style_image_opa(voice_orb_canvas_, LV_OPA_COVER, 0);
         }
     } else {
-        if (voice_orb_timer_ != nullptr) lv_timer_pause(voice_orb_timer_);
+        // A handshake that ended without a call - cancelled, or failed - drops
+        // the rings rather than leaving an exit half-run.
+        voice_orbit_exit_at_ = 0;
+        // Between calls he is still alive: blinking, and his gaze drifting.
+        // The timer keeps running and he stays at full strength - the old
+        // half-transparent idle read as the screen being dimmed, not as him
+        // waiting. It costs nothing when the call screen is not up, because
+        // the timer skips a hidden screen, and the display sleeps on its own.
+        if (voice_orb_timer_ != nullptr) lv_timer_resume(voice_orb_timer_);
         if (voice_orb_canvas_ != nullptr) {
-            RenderVoiceOrb(0.0f);
-            lv_obj_set_style_image_opa(voice_orb_canvas_, LV_OPA_50, 0);
+            RenderVoiceOrb(static_cast<float>(lv_tick_elaps(voice_orb_started_at_)) / 1000.0f);
+            lv_obj_set_style_image_opa(voice_orb_canvas_, LV_OPA_COVER, 0);
         }
     }
+}
+
+/* Walks the cycle on. Returns true while a pose other than the plain resting
+ * character is on screen - which is the whole cycle, plus the cross-fade back
+ * into idle after the agent has answered. */
+bool LcdDisplay::AdvanceWorkingCycle() {
+    const auto now = static_cast<bloub_state_id_t>(voice_cycle_state_);
+    const float held = static_cast<float>(lv_tick_elaps(voice_cycle_started_at_)) / 1000.0f;
+    if (voice_working_) {
+        if (now == BLOUB_STATE_IDLE || held >= bloub_state_duration(now)) {
+            /* Snapshot the state being left at the moment it ends: the
+             * cross-fade reads from it while it is frozen there. */
+            bloub_pose_sample(now, held, SHAPE_PROFILES[voice_shape_], &s_pose_leaving);
+            voice_cycle_index_ = static_cast<uint8_t>((voice_cycle_index_ + 1) % kWorkingCycleLength);
+            voice_cycle_state_ = static_cast<uint8_t>(kWorkingCycle[voice_cycle_index_]);
+            voice_cycle_started_at_ = lv_tick_get();
+        }
+        return true;
+    }
+    if (now != BLOUB_STATE_IDLE) {
+        bloub_pose_sample(now, held, SHAPE_PROFILES[voice_shape_], &s_pose_leaving);
+        voice_cycle_state_ = static_cast<uint8_t>(BLOUB_STATE_IDLE);
+        voice_cycle_started_at_ = lv_tick_get();
+        return true;
+    }
+    /* Idle, and the fade into it has finished: nothing left to do. */
+    return held < bloub_state_morph(BLOUB_STATE_IDLE);
 }
 
 void LcdDisplay::RenderVoiceOrb(float seconds) {
@@ -1672,6 +1891,20 @@ void LcdDisplay::RenderVoiceOrb(float seconds) {
     const lv_color16_t bg{};
     const uint16_t back = *reinterpret_cast<const uint16_t*>(&bg);
 
+    /* Where orbit is: running all through the handshake, then handed back over
+     * bloub's own cross-fade once the call is up. */
+    bloub_orbit_t orbit_state{0.0f, 1.0f};
+    if (voice_orb_connecting_ || voice_orbit_exit_at_ != 0) {
+        orbit_state.t = static_cast<float>(lv_tick_elaps(voice_orbit_started_at_)) / 1000.0f;
+        orbit_state.exit = 0.0f;
+    }
+    if (!voice_orb_connecting_ && voice_orbit_exit_at_ != 0) {
+        const uint32_t elapsed = lv_tick_elaps(voice_orbit_exit_at_);
+        if (elapsed >= kOrbitExitMs) { voice_orbit_exit_at_ = 0; orbit_state.exit = 1.0f; }
+        else orbit_state.exit = static_cast<float>(elapsed) / static_cast<float>(kOrbitExitMs);
+    }
+    const bool orbiting = orbit_state.exit < 1.0f;
+
     /* Idle life: the blink schedule and the gaze drift, both pure functions of
      * the time this screen has been up. */
     const bloub_liveliness_t life = bloub_liveliness(seconds, 1.0f, true, true);
@@ -1684,25 +1917,82 @@ void LcdDisplay::RenderVoiceOrb(float seconds) {
     gaze.pitch += life.d_pitch;
     gaze.roll += life.d_roll;
 
+    /* Connecting: the body turns and the eyes run round the sphere with it,
+     * both easing back to the resting face as the call comes up. */
+    bloub_orbit_pose_t spin{};
+    if (orbiting) bloub_orbit_pose(&orbit_state, gaze, &spin);
+
+    /* While the agent is working he runs the cycle: one state held for its
+     * measured time, then a cross-fade into the next. When the answer comes
+     * the cycle ends on idle, which is the same cross-fade - so the way back
+     * to his resting face needs no special case. Kept on the LVGL task, which
+     * is the only thing that calls this. */
+    static bloub_pose_t pose_cur, pose_shown;
+    const bool cycling = !orbiting && AdvanceWorkingCycle();
+    if (cycling) {
+        const auto now = static_cast<bloub_state_id_t>(voice_cycle_state_);
+        const float held = static_cast<float>(lv_tick_elaps(voice_cycle_started_at_)) / 1000.0f;
+        bloub_pose_sample(now, held, SHAPE_PROFILES[voice_shape_], &pose_cur);
+        const float morph = bloub_state_morph(now);
+        if (held < morph) {
+            bloub_pose_blend(&s_pose_leaving, &pose_cur,
+                             bloub_ease_out_quint(held / morph), &pose_shown);
+        } else {
+            pose_shown = pose_cur;
+        }
+        /* The idle life rides on top of whatever the state is doing, except
+         * where the state has put the eyes away. */
+        pose_shown.gaze.yaw += life.d_yaw;
+        pose_shown.gaze.pitch += life.d_pitch;
+        pose_shown.gaze.roll += life.d_roll;
+        gaze = pose_shown.gaze;
+    }
+
     bloub_face_cfg_t face;
     memset(&face, 0, sizeof(face));
-    face.radii = SHAPE_PROFILES[voice_shape_];
+    face.radii = cycling ? pose_shown.radii : SHAPE_PROFILES[voice_shape_];
     face.gaze = &gaze;
-    face.split = 16.0f;
+    face.split = cycling ? pose_shown.split : 16.0f;
+    if (orbiting) { face.rot = spin.rot; gaze = spin.gaze; }
     /* Nearly filling its canvas: bloub's face is the whole device, not a small
-     * puck in the middle of one. */
-    face.scale = static_cast<float>(size) * 0.46f;
+     * puck in the middle of one. It only shrinks to make room for the rings,
+     * and comes back up on the same cross-fade that unwinds the spin, so the
+     * size, the turn and the gaze all land together. */
+    const float shrink = orbiting
+        ? kOrbitScale + (1.0f - kOrbitScale) * bloub_ease_out_quint(orbit_state.exit)
+        : 1.0f;
+    const float ball = static_cast<float>(size) * 0.46f * shrink;
+    face.scale = ball;
     face.cx = face.cy = static_cast<float>(size) * 0.5f;
     face.sx = face.sy = 1.0f;
     face.eye_alpha = 1.0f;
+    if (cycling) {
+        face.rot = pose_shown.rot;
+        face.cx += pose_shown.cx * ball;
+        face.cy += pose_shown.cy * ball;
+        face.sx = pose_shown.sx;
+        face.sy = pose_shown.sy;
+        face.eye_alpha = pose_shown.eye_alpha;
+    }
     for (int e = 0; e < 2; e++) {
-        face.eyes[e].w = 0.21f;      /* the resting expression's eye, from bloub */
-        face.eyes[e].h = 0.44f;
-        face.eyes[e].open = bloub_blink_scale(life.lid);
+        face.eyes[e].w = cycling ? pose_shown.eyes[e].w : 0.21f;
+        face.eyes[e].h = orbiting ? spin.eye_h : (cycling ? pose_shown.eyes[e].h : 0.44f);
+        face.eyes[e].open = bloub_blink_scale(life.lid) * (cycling ? pose_shown.eyes[e].open : 1.0f);
     }
 
+    auto* pixels = reinterpret_cast<uint16_t*>(voice_orb_buffer_);
     memset(voice_orb_buffer_, 0, sizeof(lv_color16_t) * static_cast<size_t>(size) * size);
-    bloub_draw_face(reinterpret_cast<uint16_t*>(voice_orb_buffer_), size, size, &face, body, back);
+    /* The far half of the rings, then the body over them, then the near half:
+     * that is what makes a ring pass behind the character and come back round
+     * in front of it. */
+    if (orbiting) bloub_orbit_draw(pixels, size, size, &orbit_state, ball, face.cx, face.cy, true);
+    if (cycling) bloub_pose_draw_arcs(pixels, size, size, &pose_shown, ball, face.cx, face.cy, true);
+    bloub_draw_face(pixels, size, size, &face, body, back);
+    if (orbiting) bloub_orbit_draw(pixels, size, size, &orbit_state, ball, face.cx, face.cy, false);
+    if (cycling) {
+        bloub_pose_draw_arcs(pixels, size, size, &pose_shown, ball, face.cx, face.cy, false);
+        bloub_pose_draw_dots(pixels, size, size, &pose_shown, ball, face.cx, face.cy, body);
+    }
     lv_obj_invalidate(voice_orb_canvas_);
 }
 #endif

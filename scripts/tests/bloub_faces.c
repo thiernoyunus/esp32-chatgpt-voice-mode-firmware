@@ -18,9 +18,12 @@
 
 static uint16_t buf[S * S];
 
-static void save_ppm(const char* path) {
+static int save_ppm(const char* path) {
     FILE* f = fopen(path, "wb");
-    if (f == NULL) return;
+    if (f == NULL) {
+        fprintf(stderr, "cannot write %s\n", path);
+        return 0;
+    }
     fprintf(f, "P6\n%d %d\n255\n", S, S);
     for (int i = 0; i < S * S; i++) {
         const uint16_t p = buf[i];
@@ -32,6 +35,7 @@ static void save_ppm(const char* path) {
         fwrite(rgb, 1, 3, f);
     }
     fclose(f);
+    return 1;
 }
 
 int main(int argc, char** argv) {
@@ -60,7 +64,7 @@ int main(int argc, char** argv) {
 
         char path[256];
         snprintf(path, sizeof(path), "%s/bloub-face-%d.ppm", dir, s);
-        save_ppm(path);
+        if (!save_ppm(path)) return 1;
         printf("%s\n", path);
     }
     return 0;

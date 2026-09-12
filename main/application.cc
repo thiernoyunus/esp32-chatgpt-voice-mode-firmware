@@ -1892,6 +1892,7 @@ void Application::RefreshWatchInfo() {
     {
         Settings settings("codex_voice", false);
         info.temporary_chat = settings.GetBool("temporary", false);
+        info.captions = settings.GetBool("captions", true);
         info.voice = settings.GetString("voice", "");
     }
     {
@@ -1968,6 +1969,16 @@ void Application::OnWatchAction(WatchUi::Action action, int value,
                     }
                 }
                 break;
+            case WatchUi::Action::Captions: {
+                Settings s("codex_voice", true);
+                s.SetBool("captions", value != 0);
+                if (auto* lcd = dynamic_cast<LcdDisplay*>(board.GetDisplay())) {
+                    lcd->SetHideSubtitle(value == 0);
+                }
+                pending_watch_notification_ =
+                    value != 0 ? "Captions on" : "Captions off";
+                break;
+            }
             case WatchUi::Action::TemporaryChat: {
                 Settings s("codex_voice", true);
                 s.SetBool("temporary", value != 0);

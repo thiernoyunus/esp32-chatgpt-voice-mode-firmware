@@ -13,7 +13,7 @@ public:
                       Chats, Voices, Shapes, Colours };
     enum class Action { Refresh, OpenVoice, Mute, EndCall, Brightness, Volume,
                         ScanWifi, JoinWifi, SetupWifi, Models, SelectModel, Sleep, SelectReasoning,
-                        SelectChat, TemporaryChat, SelectVoice, SelectShape, SelectColour };
+                        SelectChat, TemporaryChat, SelectVoice, SelectShape, SelectColour, Captions };
     struct Info {
         int brightness = 75, volume = 65, battery = -1;
         // Seconds until the display sleeps. 0 means always on.
@@ -21,6 +21,8 @@ public:
         bool charging = false, connected = false;
         // Chats are saved to Codex unless the user opts into temporary chats.
         bool temporary_chat = false;
+        // The transcript strip on the call screen. On unless turned off.
+        bool captions = true;
         std::string network, version, model = "Default", reasoning = "Default", wifi_status, notice;
         // chat is the label of the chat the next call continues.
         std::string chat = "New chat";

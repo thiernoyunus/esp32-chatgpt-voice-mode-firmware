@@ -142,6 +142,50 @@ int main(void) {
     bloub_draw_face(buf, W, H, &face, BODY, BG);
     assert(count_body() == bare);
 
+    /* A steep gaze must erase exactly what an unbounded scan would. The eye's
+     * box used to be divided by the frame's determinant, which grew it without
+     * bound as the eye turned edge-on - slow, but also the kind of thing that
+     * is easy to "fix" into clipping the eye instead. This fails either way. */
+    {
+        const bloub_gaze_t steep = { 72.0f, 5.0f, -4.0f };
+        bloub_face_cfg_t f;
+        memset(&f, 0, sizeof(f));
+        f.radii = SHAPE_PROFILES[SHAPE_CIRCLE];
+        f.gaze = &steep;
+        f.split = 16.0f;
+        f.scale = 52.0f;
+        f.cx = f.cy = W / 2.0f;
+        f.sx = f.sy = 1.0f;
+        f.eye_alpha = 1.0f;
+        for (int e = 0; e < 2; e++) { f.eyes[e].w = 0.21f; f.eyes[e].h = 0.44f; f.eyes[e].open = 1.0f; }
+        memset(buf, 0, sizeof(buf));
+        bloub_draw_face(buf, W, H, &f, BODY, BG);
+        const int drawn = count_body();
+
+        /* The same face, erased by hand over the whole canvas. */
+        memset(buf, 0, sizeof(buf));
+        bloub_fill_shape(buf, W, H, f.radii, f.scale, f.cx, f.cy, BODY);
+        bloub_eye_t pose[2];
+        bloub_eye_poses(steep, f.scale, f.split, pose);
+        for (int e = 0; e < 2; e++) {
+            if (pose[e].depth <= 0.02f) continue;
+            const float a = pose[e].a, b = pose[e].b, c = pose[e].c, d = pose[e].d;
+            const float det = a * d - b * c;
+            const float hw = f.eyes[e].w * 0.5f * f.scale, hh = f.eyes[e].h * 0.5f * f.scale;
+            /* The eye sits where the sphere put it, not at the face's centre. */
+            const float ecx = f.cx + pose[e].x * f.sx, ecy = f.cy + pose[e].y * f.sy;
+            for (int y = 0; y < H; y++) for (int x = 0; x < W; x++) {
+                const float dx = (float)x + 0.5f - ecx, dy = (float)y + 0.5f - ecy;
+                const float u = fabsf((d * dx - b * dy) / det), v = fabsf((-c * dx + a * dy) / det);
+                const float rr = hw < hh ? hw : hh, ix = hw - rr, iy = hh - rr;
+                int inside = (u <= ix && v <= hh) || (v <= iy && u <= hw);
+                if (!inside) { const float qx = u - ix, qy = v - iy; inside = qx * qx + qy * qy <= rr * rr; }
+                if (inside) buf[y * W + x] = BG;
+            }
+        }
+        assert(drawn == count_body());
+    }
+
     printf("ok: %d shapes, circle %d px (%.1f%% of pi r^2), eye removed %d px, "
            "turning the head moves the eyes %.1f px\n",
            SHAPE_COUNT, filled, 100.0 * filled / expected, removed, moved);

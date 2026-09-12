@@ -63,6 +63,7 @@ private:
     void StopSpeaking();
     void EmitSpeechEvent(const char* state, const char* text = nullptr);
     void EmitTranscript(const char* role, const char* text);
+    void StreamTranscript(const char* role, const char* delta);
     void Fail(const std::string& message);
     void RunPeerLoop();
     // Recovers a reply that is being transcribed but never reaches the speaker.
@@ -73,6 +74,11 @@ private:
     // callbacks and read by the peer loop.
     std::atomic<uint32_t> last_audio_frame_ms_{0};
     std::atomic<uint32_t> speech_expected_since_ms_{0};
+    // The reply as it is being written. Touched only from the data-channel
+    // callback, which is the one task that parses these messages.
+    std::string transcript_partial_;
+    std::string transcript_role_;
+    uint32_t transcript_emitted_at_ = 0;
 
     static int OnPeerState(esp_peer_state_t state, void* context);
     static int OnPeerMessage(esp_peer_msg_t* message, void* context);

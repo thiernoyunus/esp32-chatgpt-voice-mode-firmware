@@ -48,11 +48,29 @@ protected:
     lv_color16_t* voice_orb_buffer_ = nullptr;
     lv_obj_t* voice_model_label_ = nullptr;
     lv_obj_t* voice_model_panel_ = nullptr;
-    lv_obj_t* voice_status_icon_ = nullptr;
-    lv_obj_t* voice_status_text_ = nullptr;
+    // The tool caption that stands in for the state word, and its icon.
+    lv_obj_t* voice_tool_text_ = nullptr;
+    lv_obj_t* voice_tool_icon_ = nullptr;
+    // When the tool caption went up, and the one-shot that ends its minimum
+    // stay if a plain "Thinking" arrived while it was still too fresh.
+    uint32_t voice_tool_shown_at_ = 0;
+    lv_timer_t* voice_tool_hold_timer_ = nullptr;
     std::unique_ptr<LvglAllocatedImage> voice_activity_image_;
     bool voice_tool_active_ = false;
     bool voice_orb_active_ = false;
+    bool voice_orb_connecting_ = false;
+    // True from the agent's first status report until it answers.
+    bool voice_working_ = false;
+    // Where the working cycle is. Held as plain integers so this header does
+    // not have to pull in bloub_states.h, whose profile tables are inline.
+    // The values are bloub_state_id_t; the cycle order is in lcd_display.cc.
+    uint8_t voice_cycle_state_ = 0;   // BLOUB_STATE_IDLE
+    uint8_t voice_cycle_index_ = 0;
+    uint32_t voice_cycle_started_at_ = 0;
+    // Ticks the rings appeared at, and the handshake ended at - the second is
+    // 0 once they have finished leaving.
+    uint32_t voice_orbit_started_at_ = 0;
+    uint32_t voice_orbit_exit_at_ = 0;
     uint32_t voice_orb_started_at_ = 0;
     uint32_t voice_orb_color_ = 0x7465EB;
     int voice_shape_ = 0;
@@ -61,7 +79,12 @@ protected:
     uint32_t voice_state_caption_color_ = 0;
 
     void RenderVoiceOrb(float seconds);
+    bool AdvanceWorkingCycle();
     void UpdateVoiceStateCaption(const char* text, uint32_t color);
+    void ShowVoiceToolCaption(bool tool);
+    void UpdateVoiceToolCaption(const char* activity);
+    void ClearVoiceToolCaption();
+    void ReleaseVoiceToolHold();
     lv_obj_t* confirm_root_ = nullptr;
     lv_obj_t* confirm_summary_ = nullptr;
     lv_obj_t* confirm_approve_btn_ = nullptr;

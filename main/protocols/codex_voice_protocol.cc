@@ -300,6 +300,12 @@ void CodexVoiceProtocol::CloseAudioChannel(bool send_goodbye) {
     closing_ = true;
     channel_open_ = false;
     speaking_ = false;
+    /* One protocol object serves every call. A call that ends mid-reply would
+     * otherwise leave half a sentence here for the next one to append to and
+     * caption. */
+    transcript_partial_.clear();
+    transcript_role_.clear();
+    transcript_emitted_at_ = 0;
     speech_expected_since_ms_.store(0);
 
     if (send_goodbye && websocket_ != nullptr && websocket_->IsConnected() &&
@@ -518,15 +524,20 @@ void CodexVoiceProtocol::HandleSignal(const char* data, size_t size) {
     } else if (strcmp(type->valuestring, "realtime_transcript_delta") == 0) {
         const cJSON* role = cJSON_GetObjectItemCaseSensitive(root, "role");
         const cJSON* delta = cJSON_GetObjectItemCaseSensitive(root, "delta");
-        if (cJSON_IsString(role) && cJSON_IsString(delta) && delta->valuestring[0] != '\0' &&
-            strcmp(role->valuestring, "assistant") == 0) {
-            StartSpeaking();
-            // The assistant is producing a reply, so audio should follow. Arm
-            // the stall check; the check itself only counts frames that arrive
-            // after this moment, so a packet still draining from an
-            // interrupted reply cannot stand in for this one.
-            uint32_t expected = 0;
-            speech_expected_since_ms_.compare_exchange_strong(expected, NowMilliseconds());
+        if (cJSON_IsString(role) && cJSON_IsString(delta) && delta->valuestring[0] != '\0') {
+            const bool assistant = strcmp(role->valuestring, "assistant") == 0;
+            if (assistant) {
+                StartSpeaking();
+                // The assistant is producing a reply, so audio should follow.
+                // Arm the stall check; the check itself only counts frames that
+                // arrive after this moment, so a packet still draining from an
+                // interrupted reply cannot stand in for this one.
+                uint32_t expected = 0;
+                speech_expected_since_ms_.compare_exchange_strong(expected, NowMilliseconds());
+            }
+            if (assistant || strcmp(role->valuestring, "user") == 0) {
+                StreamTranscript(role->valuestring, delta->valuestring);
+            }
         }
     } else if (strcmp(type->valuestring, "realtime_transcript_done") == 0) {
         const cJSON* role = cJSON_GetObjectItemCaseSensitive(root, "role");
@@ -534,7 +545,11 @@ void CodexVoiceProtocol::HandleSignal(const char* data, size_t size) {
         if (cJSON_IsString(role) && cJSON_IsString(text) &&
             (strcmp(role->valuestring, "user") == 0 ||
              strcmp(role->valuestring, "assistant") == 0)) {
+            transcript_partial_.clear();
+            transcript_role_.clear();
             if (text->valuestring[0] != '\0') {
+                // The whole line, now that there is one: the caption stops
+                // crawling and scrolls the finished sentence instead.
                 EmitTranscript(role->valuestring, text->valuestring);
             }
             ESP_LOGI(TAG, "%s transcript complete", role->valuestring);
@@ -652,6 +667,67 @@ void CodexVoiceProtocol::EmitTranscript(const char* role, const char* text) {
     cJSON_AddStringToObject(root, "text", text);
     on_incoming_json_(root);
     cJSON_Delete(root);
+}
+
+namespace {
+// What fits on the caption strip at once. The strip scrolls a finished line,
+// but a line still being written is replaced every time it grows, which
+// restarts the scroll - so while it streams, only the tail is shown, and it
+// has to actually FIT. A tail that overruns the strip by even a little starts
+// the scroll, and restarting that six times a second is what reads as the
+// caption twitching. 18 leaves room for wide characters at the strip's 174px.
+constexpr size_t kTranscriptTailChars = 18;
+// Redrawing on every token would repaint the screen faster than it can be
+// read. Six times a second keeps up with speech.
+constexpr uint32_t kTranscriptStreamMs = 160;
+// The most of a reply-in-progress worth holding on to. Several times the tail
+// that is shown, so trimming never eats into the words being displayed, and
+// far short of what an endless stream of deltas could otherwise accumulate.
+constexpr size_t kTranscriptKeepBytes = 256;
+
+/* The last words of `text`, cut at a space where there is one, and never
+ * through the middle of a multi-byte character. */
+std::string TranscriptTail(const std::string& text) {
+    if (text.size() <= kTranscriptTailChars) return text;
+    size_t cut = text.size() - kTranscriptTailChars;
+    const size_t space = text.find(' ', cut);
+    if (space != std::string::npos && space + 1 < text.size()) {
+        cut = space + 1;
+    } else {
+        while (cut < text.size() && (static_cast<unsigned char>(text[cut]) & 0xC0) == 0x80) ++cut;
+    }
+    return text.substr(cut);
+}
+}  // namespace
+
+/* The reply arrives word by word long before it is finished, and until now the
+ * only thing done with a delta was to note that audio should follow - the text
+ * itself was dropped and the caption waited for the completed line. Showing it
+ * as it lands is the difference between a caption that arrives with the voice
+ * and one that arrives after it. */
+void CodexVoiceProtocol::StreamTranscript(const char* role, const char* delta) {
+    if (transcript_role_ != role) {
+        transcript_partial_.clear();
+        transcript_role_ = role;
+        transcript_emitted_at_ = 0;
+    }
+    transcript_partial_ += delta;
+    /* Only the tail is ever shown, and a peer that never sends a completion
+     * event would otherwise grow this without limit. Keep a few tails' worth
+     * so a long word cannot be cut into by the trim itself, and cut on a UTF-8
+     * boundary so a multi-byte character is never halved. */
+    if (transcript_partial_.size() > kTranscriptKeepBytes) {
+        size_t cut = transcript_partial_.size() - kTranscriptKeepBytes;
+        while (cut < transcript_partial_.size() &&
+               (static_cast<unsigned char>(transcript_partial_[cut]) & 0xC0) == 0x80) {
+            ++cut;
+        }
+        transcript_partial_.erase(0, cut);
+    }
+    const uint32_t now = NowMilliseconds();
+    if (transcript_emitted_at_ != 0 && now - transcript_emitted_at_ < kTranscriptStreamMs) return;
+    transcript_emitted_at_ = now;
+    EmitTranscript(role, TranscriptTail(transcript_partial_).c_str());
 }
 
 void CodexVoiceProtocol::Fail(const std::string& message) {

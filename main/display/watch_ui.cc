@@ -371,7 +371,12 @@ void WatchUi::Show(Page page) {
         Row("Voice",info_.voice.empty()?"Default":info_.voice.c_str(),&watch_icons::mic,[this]{Show(Page::Voices);});
         Row("Model",info_.model.c_str(),&watch_icons::more,[this]{model_return_=Page::CodexSettings;Show(Page::Models);Emit(Action::Models);});
         Row("Chat",info_.temporary_chat?"Temporary":info_.chat.c_str(),&watch_icons::more,[this]{Show(Page::Chats);Emit(Action::Models);});
-        Row("Reasoning",info_.reasoning.c_str(),&watch_icons::more,[this]{Show(Page::Reasoning);});break;
+        Row("Reasoning",info_.reasoning.c_str(),&watch_icons::more,[this]{Show(Page::Reasoning);});
+        Row("Captions",info_.captions?"On":"Off",nullptr,[this]{
+            info_.captions=!info_.captions;
+            Emit(Action::Captions,info_.captions?1:0);
+            Show(Page::CodexSettings);
+        });break;
     case Page::Shapes: {
         Header("Shape",Page::CodexSettings);Column();
         // Four rows fill the space between the header rule and the bottom of
@@ -537,6 +542,10 @@ void WatchUi::SetInfo(const Info& info) {
     bool wifi_changed=info_.networks!=info.networks||info_.network!=info.network||info_.wifi_status!=info.wifi_status;
     bool models_changed=info_.models!=info.models;
     bool chats_changed=info_.chats!=info.chats||info_.chat!=info.chat||info_.temporary_chat!=info.temporary_chat;
+    // Captions live on the ChatGPT page, not the Chats page, so they need
+    // their own trigger - folded in with the chats it would only ever have
+    // redrawn a page the row is not on.
+    const bool captions_changed=info_.captions!=info.captions;
     bool sleep_changed=info_.sleep_seconds!=info.sleep_seconds;
     bool notice_changed=info_.notice!=info.notice;
     info_=info;
@@ -544,7 +553,8 @@ void WatchUi::SetInfo(const Info& info) {
        ||(page_==Page::Models&&models_changed)
        ||(page_==Page::Chats&&chats_changed)
        ||(page_==Page::Sleep&&sleep_changed)
-       ||(page_==Page::Brightness&&sleep_changed)) Show(page_);
+       ||(page_==Page::Brightness&&sleep_changed)
+       ||(page_==Page::CodexSettings&&captions_changed)) Show(page_);
     else if (notice_changed) UpdateNotice();
 }
 void WatchUi::Tick(const char* clock,const char* date){
