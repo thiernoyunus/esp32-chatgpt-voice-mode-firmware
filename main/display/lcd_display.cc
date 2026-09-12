@@ -46,7 +46,6 @@ namespace {
 // orbit turns the whole body at 1.25 turns a second, which at 15 arrives in
 // 30-degree steps and reads as stuttering rather than spinning.
 constexpr uint32_t kFluidOrbFramePeriodMs = 33;
-constexpr int kFluidOrbSampleStep = 2;
 
 constexpr uint32_t kVoiceGreen = 0x30C46E;
 constexpr uint32_t kVoiceCyan = 0x2FD8E8;
@@ -118,50 +117,6 @@ VoiceStateCaption CaptionForDeviceState(DeviceState state, bool muted) {
     }
 }
 
-float FluidOrbMix(float first, float second, float amount) {
-    return first + (second - first) * amount;
-}
-
-float FluidOrbSmoothStep(float edge0, float edge1, float value) {
-    const float amount = std::clamp((value - edge0) / (edge1 - edge0), 0.0f, 1.0f);
-    return amount * amount * (3.0f - 2.0f * amount);
-}
-
-float FluidOrbHash(float x, float y) {
-    // The browser shader uses sine here; an integer hash keeps the same smooth noise field
-    // without hundreds of thousands of trig calls per frame on the ESP32.
-    const uint32_t ix = static_cast<uint32_t>(static_cast<int32_t>(x));
-    const uint32_t iy = static_cast<uint32_t>(static_cast<int32_t>(y));
-    uint32_t value = ix * 374761393u + iy * 668265263u;
-    value = (value ^ (value >> 13)) * 1274126177u;
-    value ^= value >> 16;
-    return static_cast<float>(value) / 4294967295.0f;
-}
-
-float FluidOrbNoise(float x, float y) {
-    const float ix = std::floor(x);
-    const float iy = std::floor(y);
-    const float fx = x - ix;
-    const float fy = y - iy;
-    const float ux = fx * fx * (3.0f - 2.0f * fx);
-    const float uy = fy * fy * (3.0f - 2.0f * fy);
-    const float lower = FluidOrbMix(FluidOrbHash(ix, iy), FluidOrbHash(ix + 1.0f, iy), ux);
-    const float upper = FluidOrbMix(FluidOrbHash(ix, iy + 1.0f),
-                                    FluidOrbHash(ix + 1.0f, iy + 1.0f), ux);
-    return FluidOrbMix(lower, upper, uy);
-}
-
-float FluidOrbFbm(float x, float y) {
-    float value = 0.0f;
-    float amplitude = 0.6f;
-    for (int octave = 0; octave < 3; ++octave) {
-        value += amplitude * FluidOrbNoise(x, y);
-        x *= 2.0f;
-        y *= 2.0f;
-        amplitude *= 0.5f;
-    }
-    return value;
-}
 }  // namespace
 #endif
 
@@ -1888,8 +1843,7 @@ void LcdDisplay::RenderVoiceOrb(float seconds) {
      * care how the panel orders its 16-bit words. */
     const int size = voice_geometry::kOrbSize;
     const uint16_t body = lv_color_to_u16(lv_color_hex(voice_character::kColors[voice_colour_]));
-    const lv_color16_t bg{};
-    const uint16_t back = *reinterpret_cast<const uint16_t*>(&bg);
+    const uint16_t back = lv_color_to_u16(lv_color_hex(0x000000));
 
     /* Where orbit is: running all through the handshake, then handed back over
      * bloub's own cross-fade once the call is up. */
