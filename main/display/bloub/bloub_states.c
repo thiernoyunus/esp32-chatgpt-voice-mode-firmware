@@ -6,19 +6,6 @@
 #include <stddef.h>
 #include <string.h>
 
-/* bloub's egg, its own 64 radial samples. The rest of the states wear either
- * the watch's chosen shape or one of the silhouettes already in
- * bloub_shapes.h, so this is the only profile the catalogue adds. */
-static const float PROFILE_EGG[SHAPE_SAMPLES] = {
-    0.8369f,0.8424f,0.8497f,0.8585f,0.8674f,0.8775f,0.8878f,0.8983f,0.9089f,0.9185f,
-    0.9288f,0.9374f,0.9445f,0.9504f,0.9543f,0.9559f,0.9555f,0.9519f,0.9466f,0.9389f,
-    0.9302f,0.9193f,0.9085f,0.8969f,0.8852f,0.8734f,0.8625f,0.8513f,0.8411f,0.8325f,
-    0.8243f,0.8179f,0.8137f,0.8112f,0.8102f,0.8128f,0.8178f,0.8262f,0.8374f,0.8518f,
-    0.8702f,0.8922f,0.9169f,0.9446f,0.9741f,1.0023f,1.0267f,1.0433f,1.0481f,1.0393f,
-    1.0216f,0.9970f,0.9697f,0.9418f,0.9169f,0.8949f,0.8760f,0.8604f,0.8490f,0.8394f,
-    0.8337f,0.8314f,0.8305f,0.8326f
-};
-
 /* play's swoosh: a, k, tilt, speed, phase, sweep, hue, hueSpan, width, cx, cy. */
 static const bloub_arc_seed_t SWOOSH[4] = {
     {0.78f, 0.05f, -0.62f, 0.30f, 0.00f, 0.40f,  95.0f, 100.0f, 0.05f, 0.0f, -0.12f},
@@ -39,8 +26,8 @@ static const bloub_arc_seed_t SWOOSH[4] = {
 #define TRI_ORBIT 0.213f
 
 /* Measured. Held for `duration`, faded into over `morph`. */
-static const float DURATION[BLOUB_STATE_COUNT] = {2.4f, 2.6f, 1.6f, 1.8f, 1.8f, 1.6f, 2.0f};
-static const float MORPH[BLOUB_STATE_COUNT] = {0.45f, 0.4f, 0.3f, 0.55f, 0.4f, 0.4f, 0.5f};
+static const float DURATION[BLOUB_STATE_COUNT] = {2.4f, 2.6f, 1.6f, 1.8f, 2.0f};
+static const float MORPH[BLOUB_STATE_COUNT] = {0.45f, 0.4f, 0.3f, 0.55f, 0.5f};
 
 float bloub_state_duration(bloub_state_id_t id) {
     return (id >= 0 && id < BLOUB_STATE_COUNT) ? DURATION[id] : 2.0f;
@@ -121,22 +108,6 @@ void bloub_pose_sample(bloub_state_id_t id, float t, const float* body, bloub_po
         out->split = 18.43f;
         out->eyes[0].w = out->eyes[1].w = 0.356f;
         out->eyes[0].h = out->eyes[1].h = 0.875f;
-        break;
-
-    case BLOUB_STATE_EGG:
-        set_profile(out, PROFILE_EGG);
-        out->gaze = (bloub_gaze_t){19.97f, 26.01f, -17.1f};
-        out->split = 11.07f;
-        out->eyes[0].w = out->eyes[1].w = 0.164f;
-        out->eyes[0].h = out->eyes[1].h = 0.385f;
-        break;
-
-    case BLOUB_STATE_HEXAGON:
-        set_profile(out, SHAPE_PROFILES[SHAPE_HEXAGON]);
-        out->gaze = (bloub_gaze_t){23.11f, 24.42f, -13.3f};
-        out->split = 13.37f;
-        out->eyes[0].w = out->eyes[1].w = 0.177f;
-        out->eyes[0].h = out->eyes[1].h = 0.411f;
         break;
 
     case BLOUB_STATE_PLAY: {

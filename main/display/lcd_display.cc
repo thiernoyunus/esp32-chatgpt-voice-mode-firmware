@@ -76,12 +76,12 @@ constexpr float kOrbitScale = 0.68f;
 // What he does while the agent is working. bloub plays its whole catalogue in
 // order; this is the part of it that reads as activity rather than as a
 // notification, a problem, or sleep - see bloub_states.h.
-// BLOUB_STATE_PLAY is ported but not in the cycle: its swoosh sweeps out past
-// 1.8 body radii, wider than this canvas, and the character would have to
-// shrink by nearly half mid-cycle to make room for it.
+// Two are left out. PLAY's swoosh sweeps past 1.8 body radii, wider than this
+// canvas. EGG and HEXAGON replaced the silhouette outright, so the shape
+// picked in Settings vanished mid-sentence - they are gone entirely.
 constexpr bloub_state_id_t kWorkingCycle[] = {
-    BLOUB_STATE_THINKING, BLOUB_STATE_WINK,    BLOUB_STATE_HEXAGON,
-    BLOUB_STATE_THINKING, BLOUB_STATE_WIDE,    BLOUB_STATE_EGG,
+    BLOUB_STATE_THINKING, BLOUB_STATE_WINK,
+    BLOUB_STATE_THINKING, BLOUB_STATE_WIDE,
 };
 constexpr int kWorkingCycleLength = sizeof(kWorkingCycle) / sizeof(kWorkingCycle[0]);
 // The state being left, frozen at the moment it ended, for the cross-fade to

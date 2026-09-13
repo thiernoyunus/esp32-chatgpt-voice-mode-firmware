@@ -79,7 +79,7 @@ int main(void) {
      * past 1.8 body radii, wider than the call screen's canvas, so it is
      * ported but not cycled - see kWorkingCycle in lcd_display.cc. */
     const bloub_state_id_t cycled[] = {BLOUB_STATE_IDLE, BLOUB_STATE_THINKING, BLOUB_STATE_WINK,
-                                       BLOUB_STATE_WIDE, BLOUB_STATE_EGG, BLOUB_STATE_HEXAGON};
+                                       BLOUB_STATE_WIDE};
     const float ball = (float)S * 0.46f, mid = (float)S * 0.5f;
     for (unsigned ci = 0; ci < sizeof(cycled) / sizeof(cycled[0]); ci++) {
         const int i = (int)cycled[ci];

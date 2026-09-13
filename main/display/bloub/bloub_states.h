@@ -28,8 +28,6 @@ typedef enum {
     BLOUB_STATE_THINKING,
     BLOUB_STATE_WINK,
     BLOUB_STATE_WIDE,
-    BLOUB_STATE_EGG,
-    BLOUB_STATE_HEXAGON,
     BLOUB_STATE_PLAY,
     BLOUB_STATE_COUNT,
 } bloub_state_id_t;
