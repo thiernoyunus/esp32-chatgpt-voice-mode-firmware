@@ -255,6 +255,22 @@ void Ota::MarkCurrentVersionValid() {
     }
 
     ESP_LOGI(TAG, "Running partition: %s", partition->label);
+    running_slot_ = partition->label;
+
+    /* The slot that is NOT running. After a rollback that is the update which
+     * failed, and the bootloader marks it so. Reading it here is the only
+     * honest way for the running app to know it is the fallback rather than
+     * the intended version. */
+    const esp_partition_t* other = esp_ota_get_next_update_partition(nullptr);
+    esp_ota_img_states_t other_state;
+    if (other != nullptr && esp_ota_get_state_partition(other, &other_state) == ESP_OK) {
+        rolled_back_ = other_state == ESP_OTA_IMG_INVALID || other_state == ESP_OTA_IMG_ABORTED;
+        if (rolled_back_) {
+            ESP_LOGW(TAG, "Slot %s failed to start; running %s instead", other->label,
+                     partition->label);
+        }
+    }
+
     esp_ota_img_states_t state;
     if (esp_ota_get_state_partition(partition, &state) != ESP_OK) {
         ESP_LOGE(TAG, "Failed to get state of partition");

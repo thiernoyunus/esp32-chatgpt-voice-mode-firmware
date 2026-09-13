@@ -577,6 +577,13 @@ void Application::CheckApolloFirmwareUpdate() {
     // the next reboot unless it is marked valid. The xiaozhi path that did
     // this lives in CheckNewVersion, which is compiled out under Apollo.
     ota_->MarkCurrentVersionValid();
+    if (ota_->RolledBack()) {
+        /* Said in the words someone who did not build this would use. The boot
+         * check below asks the server for the current version and reinstalls
+         * if there is one, so this is a report of something already being put
+         * right, not a dead end. */
+        pending_watch_notification_ = "Update didn't finish. Running your last working version.";
+    }
 
     Settings settings("apollo", false);
     std::string base_url = settings.GetString("url");
@@ -1895,6 +1902,10 @@ void Application::RefreshWatchInfo() {
         if (std::find(info.networks.begin(), info.networks.end(), name) == info.networks.end())
             info.networks.push_back(name);
     info.version = esp_app_get_description()->version;
+    if (ota_ != nullptr) {
+        info.slot = ota_->GetRunningSlot();
+        info.rolled_back = ota_->RolledBack();
+    }
     if (auto voice = dynamic_cast<CodexVoiceProtocol*>(protocol_.get())) {
         Settings settings("codex_voice", false);
         const std::string selected = settings.GetString("model", "");

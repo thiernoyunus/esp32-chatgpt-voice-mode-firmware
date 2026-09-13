@@ -157,6 +157,9 @@ int main() {
     info.models = {"gpt-4o", "gpt-4o-mini", "o1-mini"};
     // Reasoning and Chats render a picker only when there is something to pick.
     info.reasoning = "Medium";
+    // The recovery case: the update failed and the watch is on the old one.
+    info.rolled_back = true;
+    info.slot = "ota_1";
     info.chats = {"Trip planning", "Firmware notes"};
     ui.SetInfo(info);
     const uint32_t base_screen_count = screen_count();
@@ -188,7 +191,7 @@ int main() {
     // page of its own, so it is rendered here over Settings and then cleared -
     // anything left on screen would show up in the nav-stability count below.
     {
-        const char* kNotice = "Wi-Fi lost. Reconnecting.";
+        const char* kNotice = "Update didn't finish. Running your last working version.";
         ui.Show(WatchUi::Page::Settings); tick_lv();
         info.notice = kNotice; ui.SetInfo(info); tick_lv();
         check(find_label(lv_screen_active(), kNotice) != nullptr, "Notice banner appears");

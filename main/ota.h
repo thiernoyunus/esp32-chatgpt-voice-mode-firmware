@@ -24,6 +24,15 @@ public:
     static bool Upgrade(const std::string& firmware_url, std::function<void(int progress, size_t speed)> callback);
     void MarkCurrentVersionValid();
 
+    /* Which of the two app slots is running, and whether the other one failed.
+     * A slot number on its own means nothing - an update alternates between
+     * them in normal use, so being on ota_1 is not a problem. What does mean
+     * something is the OTHER slot being marked invalid or aborted, which is
+     * what the bootloader leaves behind when an update would not start and it
+     * put the previous version back. */
+    const std::string& GetRunningSlot() const { return running_slot_; }
+    bool RolledBack() const { return rolled_back_; }
+
     const std::string& GetFirmwareVersion() const { return firmware_version_; }
     const std::string& GetCurrentVersion() const { return current_version_; }
     const std::string& GetFirmwareUrl() const { return firmware_url_; }
@@ -46,6 +55,8 @@ private:
     std::string firmware_version_;
     std::string firmware_url_;
     std::string check_version_url_override_;
+    std::string running_slot_;
+    bool rolled_back_ = false;
     std::string activation_challenge_;
     std::string serial_number_;
     int activation_timeout_ms_ = 30000;

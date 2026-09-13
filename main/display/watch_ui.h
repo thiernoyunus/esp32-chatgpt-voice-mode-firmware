@@ -23,6 +23,11 @@ public:
         bool temporary_chat = false;
         // The transcript strip on the call screen. On unless turned off.
         bool captions = true;
+        // Which app slot is running, and whether the other one failed to start.
+        // Shown under About so "what is it running?" can be answered by someone
+        // holding the watch rather than reading a serial log.
+        bool rolled_back = false;
+        std::string slot;
         std::string network, version, model = "Default", reasoning = "Default", wifi_status, notice;
         // chat is the label of the chat the next call continues.
         std::string chat = "New chat";

@@ -359,6 +359,13 @@ void WatchUi::Show(Page page) {
     case Page::About:{
         Header("About Apollo",Page::Settings);Column();
         Row("Firmware",info_.version.c_str(),&watch_icons::info,{});
+        // Row drops a value too wide to fit, so these stay short - the
+        // sentence is the notice card's job. "A"/"B" because ota_0 means
+        // nothing to the wearer, and the font has no underscore anyway.
+        if(info_.rolled_back)
+            Row("Update","Failed",&watch_icons::info,{});
+        else if(!info_.slot.empty())
+            Row("Slot",info_.slot=="ota_1"?"B":"A",&watch_icons::info,{});
         Row("Voice","Codex Voice / WebRTC",&watch_icons::mic,{});
         std::string battery=info_.battery<0?"Not available":std::to_string(info_.battery)+"%"+(info_.charging?" - charging":"");
         Row("Battery",battery.c_str(),&watch_icons::info,{});
