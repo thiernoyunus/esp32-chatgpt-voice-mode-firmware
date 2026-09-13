@@ -298,10 +298,6 @@ void WifiBoard::EnterWifiConfigMode() {
     });
 }
 
-bool WifiBoard::IsInWifiConfigMode() const {
-    return WifiManager::GetInstance().IsConfigMode();
-}
-
 NetworkInterface* WifiBoard::GetNetwork() {
     static EspNetwork network;
     return &network;

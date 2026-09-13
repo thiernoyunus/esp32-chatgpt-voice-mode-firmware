@@ -1,47 +1,42 @@
 # Protocol
 
-The device speaks Apollo's JSON-over-websocket dialect, implemented in `main/protocols/apollo_protocol.*`. The server-side contract (Zod schemas) lives in the main repo; this chapter covers the device's half. The upstream MQTT and websocket protocols were removed from this fork.
+The device speaks Codex Voice through `main/protocols/codex_voice_protocol.*`: a long-lived **control WebSocket** plus a **per-call WebRTC** session. The Classic Apollo JSON-over-websocket dialect (`apollo_protocol.*`) is gone from this tree.
 
 ## Connection
 
-The URL is built as `<base>/agents/apollo/<device_id>?token=<token>` — the agents SDK routes on path and authenticates from the query parameter. The channel opens lazily when a session starts, not at boot.
+`Start()` opens the control socket to `<base>/agents/apollo/<device_id>?token=<token>`, sends `hello`, and leaves MCP available while idle. A voice call starts later: `OpenAudioChannel()` creates an `esp_peer` WebRTC session (Opus 16 kHz mono, send and receive), waits for the reliable data channel `oai-events`, then fires the opened callbacks.
+
+Signaling stays on the control WebSocket. The local SDP goes out as `realtime_offer` (optional `model` / `threadId` / `temporary` / `voice`); the bridge answers with `realtime_answer` (SDP plus the model and chat lists the watch UI can show).
 
 ## Device → server
 
-| Type | Sent when |
-|------|-----------|
-| `hold_start` / `hold_end` | Push-to-talk press and release |
-| `wake` | Wake word detected |
-| `audio_end` | VAD endpoint of a wake-word turn: ≥300 ms of speech followed by 1.2 s of silence commits the utterance |
-| `listen_cancel` | The listen session ended without a turn: a tap on the open mic, or 8 s with no speech |
-| `gesture` | `double_tap`, `swipe_left`, `swipe_right` (a tap acts locally and is never forwarded) |
-| `confirm` | A button press on the confirm screen: Sí sends `ok: true`, No sends `ok: false` |
-| `abort` | User interrupts playback |
-| `playback_ack` | Once a second while speaking: `playedMilliseconds` of TTS audio actually output, plus the `sequence` echoed from `tts_start`, so the server paces against the real queue instead of a model |
+| Path | What moves |
+|------|------------|
+| Control WS `realtime_offer` | SDP to start a call, with optional model/chat/voice choices |
+| Control WS `realtime_stop` | Hang up |
+| Control WS `mcp` | Device-side MCP tool traffic |
+| WebRTC Opus uplink | Microphone audio for the open call |
 
-Utterance audio rides as raw binary frames (PCM, no framing): the server concatenates them and wraps a RIFF header before transcription.
+Listening / wake helpers on the base `Protocol` class are no-ops here: opening the audio channel *is* the call. Cancel and abort tear the WebRTC session down.
 
 ## Server → device
 
-| Type | Handled by |
-|------|-----------|
-| `ui_state` | Face emotion (mapped to the emote vocabulary), accent ring color, caption; `focusStartedAt`/`focusEndsAt` (epoch seconds) drive the draining arc on the ring, counted down locally |
-| `tts_start` | Announces sample rate (and `sequence`) of the PCM run. A `bytes` total makes the run self-closing by byte count; without one the run stays open until `tts_end`, which is what allows streaming synthesis |
-| `tts_end` | Closes an open-ended run |
-| `tts_aborted` | Closes a run whose bytes will never arrive |
-| `timer` | `endsAt` + `durationSeconds` (epoch seconds) start a countdown arc that outranks the focus arc; without them the arc clears |
-| `confirm_request` | Full-screen confirm prompt (summary + Sí/No buttons) with a local expiry from `expiresAt` |
-| `confirm_close` | The window ended elsewhere (resolved, expired, lost); dismisses the confirm screen |
-| `error` / `reminder` / `background_result` | Alerts with matching face |
-| `turn_end` | `expectsReply` decides what follows the reply: reopen the mic (the model asked something) or return to idle. Missing `turn_end` falls back to reopening |
+| Path | Handled as |
+|------|------------|
+| Control WS `realtime_answer` | Remote SDP plus model/chat inventory |
+| Control WS `realtime_status` | Tool caption / icon while the agent works |
+| Control WS `realtime_error` | Call failure |
+| Control WS transcript deltas / done | Captions on the orb |
+| WebRTC Opus downlink | Speaker audio |
+| Peer data-channel events | Realtime turn / error traffic (`turn.created`, `error`, …) |
 
-Reply audio arrives as headerless PCM binary frames and bypasses the Opus decoder (`AudioStreamPacket.pcm`).
+If captions arrive but no real inbound audio shows up for about four seconds, a stall detector tears the call down and may retry (up to three times).
 
 ## Design notes
 
-- Emotions are translated in `MapApolloEmotion`: Apollo's vocabulary → emote asset names, avoiding non-looping assets that freeze the face.
-- `dashboard` and the agents SDK's own `cf_agent_*` traffic are ignored on purpose.
-- Turn audio byte counts are logged on `hold_end` — the difference between "the mic is deaf" and "the audio never left the device".
+- Mic and speaker audio ride Opus RTP on WebRTC, not binary websocket frames.
+- Base-class Classic helpers (`SendTelemetry`, `SendConfirm`, `SendPlaybackAck`) stay as empty defaults; Codex Voice does not implement them.
+- Turn the call off with `CloseAudioChannel` / `realtime_stop`; there is no separate `hold_end` / `audio_end` dialect on this path.
 
 ## Navigation
 

@@ -13,7 +13,7 @@ The manufacturer prefix is required. Only this board builds in this fork; the bo
 
 ## Output
 
-A successful build produces `build/merged-binary.bin` plus the individual images (`xiaozhi.bin`, `expression_assets.bin`, bootloader, partition table) and `build/flash_args` for esptool.
+A successful build produces `build/merged-binary.bin` plus the individual images (`xiaozhi.bin`, bootloader, partition table) and `build/flash_args` for esptool.
 
 ## Navigation
 

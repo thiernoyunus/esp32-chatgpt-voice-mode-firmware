@@ -1,6 +1,5 @@
 #include "device_state_machine.h"
 
-#include <algorithm>
 #include <esp_log.h>
 
 static const char* TAG = "StateMachine";
@@ -101,10 +100,6 @@ bool DeviceStateMachine::IsValidTransition(DeviceState from, DeviceState to) con
     }
 }
 
-bool DeviceStateMachine::CanTransitionTo(DeviceState target) const {
-    return IsValidTransition(current_state_.load(), target);
-}
-
 bool DeviceStateMachine::TransitionTo(DeviceState new_state) {
     DeviceState old_state = current_state_.load();
     
@@ -135,14 +130,6 @@ int DeviceStateMachine::AddStateChangeListener(StateCallback callback) {
     int id = next_listener_id_++;
     listeners_.emplace_back(id, std::move(callback));
     return id;
-}
-
-void DeviceStateMachine::RemoveStateChangeListener(int listener_id) {
-    std::lock_guard<std::mutex> lock(mutex_);
-    listeners_.erase(
-        std::remove_if(listeners_.begin(), listeners_.end(),
-            [listener_id](const auto& p) { return p.first == listener_id; }),
-        listeners_.end());
 }
 
 void DeviceStateMachine::NotifyStateChange(DeviceState old_state, DeviceState new_state) {

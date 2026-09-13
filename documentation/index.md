@@ -1,6 +1,6 @@
 # Apollo Firmware Handbook
 
-Apollo's firmware runs on a Waveshare ESP32-S3-Touch-LCD-1.85C (V2, round 360×360 touch display), forked from [78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32). It talks to the [Apollo server](https://github.com/galfrevn/apollo) over websocket; the firmware adapts to Apollo's protocol, never the other way around.
+Apollo's firmware runs on a Waveshare ESP32-S3-Touch-LCD-1.85C (V2, round 360×360 touch display), forked from [78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32). It talks to the [Apollo server](https://github.com/galfrevn/apollo) over a control WebSocket plus per-call WebRTC (Codex Voice); the firmware adapts to Apollo's protocol, never the other way around.
 
 This handbook is meant to be read in order. Later chapters assume the concepts introduced earlier. The server-side handbook lives in the main repo and covers everything above the wire.
 
@@ -13,9 +13,9 @@ This handbook is meant to be read in order. Later chapters assume the concepts i
 
 ### Part II — Runtime
 
-3. [Protocol](runtime/protocol.md) — The Apollo dialect, seen from the device
+3. [Protocol](runtime/protocol.md) — Codex Voice (control WebSocket + WebRTC)
 4. [Audio](runtime/audio.md) — Mic to server, server to speaker
-5. [Face](runtime/face.md) — Emote engine, emotion mapping, accent ring
+5. [Face](runtime/face.md) — Watch UI and call-face orb
 6. [Touch](runtime/touch.md) — Hold-to-talk, gestures, screen sleep
 7. [Sounds](runtime/sounds.md) — UI effects and their pitch variants
 

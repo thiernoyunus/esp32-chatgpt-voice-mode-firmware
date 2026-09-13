@@ -1,9 +1,5 @@
 #include "i2c_device.h"
 
-#include <esp_log.h>
-
-#define TAG "I2cDevice"
-
 I2cDevice::I2cDevice(i2c_master_bus_handle_t i2c_bus, uint8_t addr)
     : i2c_bus_(i2c_bus), device_address_(addr) {
     i2c_device_config_t i2c_device_cfg = {
@@ -29,13 +25,4 @@ uint8_t I2cDevice::ReadReg(uint8_t reg) {
     uint8_t buffer[1];
     ESP_ERROR_CHECK(i2c_master_transmit_receive(i2c_device_, &reg, 1, buffer, 1, 100));
     return buffer[0];
-}
-
-void I2cDevice::ReadRegs(uint8_t reg, uint8_t* buffer, size_t length) {
-    ESP_ERROR_CHECK(i2c_master_transmit_receive(i2c_device_, &reg, 1, buffer, length, 100));
-}
-
-esp_err_t I2cDevice::ResetBus(const char* reason) {
-    ESP_LOGW(TAG, "Resetting I2C bus: %s", reason ? reason : "unspecified");
-    return i2c_master_bus_reset(i2c_bus_);
 }

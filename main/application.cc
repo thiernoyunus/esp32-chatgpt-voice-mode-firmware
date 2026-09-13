@@ -1097,55 +1097,6 @@ void Application::NoteUserActivity() {
     board.GetDisplay()->SetPowerSaveMode(false);
 }
 
-void Application::SendGesture(const std::string& gesture) {
-    Schedule([this, gesture]() {
-        // A touch on a dark screen means "wake up", nothing more: forwarding it
-        // would also open the dashboard, which is not what the hand meant.
-        const bool was_asleep = is_screen_asleep_;
-        NoteUserActivity();
-        if (was_asleep) {
-            return;
-        }
-
-        if (!protocol_) {
-            return;
-        }
-
-        if (gesture == "tap" || gesture == "double_tap") {
-            HandleToggleChatEvent();
-        }
-        return;
-
-        // Recording is on the press-and-hold; a tap is only ever a way to stop
-        // something, so it never reaches the server as a gesture.
-        if (gesture == "tap") {
-            switch (GetDeviceState()) {
-                case kDeviceStateSpeaking:
-                    AbortSpeaking(kAbortReasonNone);
-                    // Telling the server to stop is not enough on its own:
-                    // seconds of already-delivered audio are sitting in the
-                    // queues and would keep playing over the silence.
-                    audio_service_.ResetDecoder();
-                    SetDeviceState(kDeviceStateIdle);
-                    return;
-                case kDeviceStateListening:
-                    // A tap on an open mic means "forget it": the buffered
-                    // audio is discarded server-side, no turn runs.
-                    CancelListening();
-                    return;
-                default:
-                    // Mid-connect or mid-activation: a tap has nothing to toggle.
-                    return;
-            }
-        }
-        if (!protocol_->IsAudioChannelOpened() && !protocol_->OpenAudioChannel()) {
-            ESP_LOGW(TAG, "Gesture '%s' dropped: no channel", gesture.c_str());
-            return;
-        }
-        protocol_->SendGesture(gesture);
-    });
-}
-
 void Application::OnVoiceTouchRelease(int x, int y) {
     Schedule([this, x, y]() {
         const bool was_asleep = is_screen_asleep_;
@@ -1692,32 +1643,6 @@ bool Application::UpgradeFirmware(const std::string& url, const std::string& ver
     }
 }
 
-void Application::WakeWordInvoke(const std::string& wake_word) {
-    if (!protocol_) {
-        return;
-    }
-
-    auto state = GetDeviceState();
-
-    if (state == kDeviceStateIdle) {
-        // May be called from outside the main task (e.g. board button
-        // callbacks), so schedule the invocation instead of running it here
-        Schedule([this, wake_word]() {
-            if (GetDeviceState() == kDeviceStateIdle) {
-                BeginWakeWordInvoke(wake_word);
-            }
-        });
-    } else if (state == kDeviceStateSpeaking) {
-        Schedule([this]() { AbortSpeaking(kAbortReasonNone); });
-    } else if (state == kDeviceStateListening) {
-        Schedule([this]() {
-            if (protocol_) {
-                protocol_->CloseAudioChannel();
-            }
-        });
-    }
-}
-
 bool Application::CanEnterSleepMode() {
     if (GetDeviceState() != kDeviceStateIdle) {
         return false;
@@ -1735,18 +1660,11 @@ bool Application::CanEnterSleepMode() {
     return true;
 }
 
-void Application::RegisterMcpBroadcastCallback(std::function<void(const std::string&)> callback) {
-    mcp_broadcast_callback_ = std::move(callback);
-}
-
 void Application::SendMcpMessage(const std::string& payload) {
     // Always schedule to run in main task for thread safety
     Schedule([this, payload]() {
         if (protocol_) {
             protocol_->SendMcpMessage(payload);
-        }
-        if (mcp_broadcast_callback_) {
-            mcp_broadcast_callback_(payload);
         }
     });
 }

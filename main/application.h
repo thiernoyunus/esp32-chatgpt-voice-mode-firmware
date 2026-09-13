@@ -109,11 +109,9 @@ public:
     void StopListening();
 
     void Reboot();
-    void WakeWordInvoke(const std::string& wake_word);
     bool UpgradeFirmware(const std::string& url, const std::string& version = "");
     bool CanEnterSleepMode();
     void SendMcpMessage(const std::string& payload);
-    void RegisterMcpBroadcastCallback(std::function<void(const std::string&)> callback);
     void SetAecMode(AecMode mode);
     AecMode GetAecMode() const { return aec_mode_; }
     // Whether the just-finished reply expects an answer; safe from any task.
@@ -143,8 +141,6 @@ private:
     std::string last_error_message_;
     AudioService audio_service_;
     std::unique_ptr<Ota> ota_;
-
-    std::function<void(const std::string&)> mcp_broadcast_callback_;
 
     bool has_server_time_ = false;
     bool aborted_ = false;
@@ -201,9 +197,6 @@ public:
 private:
 
 public:
-    // Called from the board's touch task. Opens the channel if needed, because
-    // most gestures are useful precisely when the device is sitting idle.
-    void SendGesture(const std::string& gesture);
     void OnVoiceTouchRelease(int x, int y);
     bool IsScreenAsleep() const { return is_screen_asleep_.load(); }
     void OnWatchAction(WatchUi::Action action, int value, const std::string& text,

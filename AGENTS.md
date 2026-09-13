@@ -10,7 +10,7 @@ This active workspace builds only real Codex Voice/WebRTC with the Codex orb.
 Never build or flash Classic/eyes firmware here. The user's separate backup is
 the recovery copy. Before flashing, verify the generated config enables
 APOLLO_CODEX_VOICE and USE_DEFAULT_MESSAGE_STYLE, and the linked image contains
-LcdDisplay::RenderVoiceOrb and CodexVoiceProtocol, not EmoteDisplay.
+LcdDisplay::RenderVoiceOrb and CodexVoiceProtocol.
 
 ## Architecture
 
@@ -20,9 +20,8 @@ LcdDisplay::RenderVoiceOrb and CodexVoiceProtocol, not EmoteDisplay.
 - `main/boards/waveshare/esp32-s3-touch-lcd-1.85c/`: pins, panel, touch task, board assets.
 - `main/audio/`: audio service, codecs, wake word (runs on the raw mic here), queues.
 - `main/protocols/codex_voice_protocol.*`: the realtime WebRTC voice client this workspace builds.
-- `main/protocols/apollo_protocol.*`: the Classic request/response protocol, kept for the backup build only.
 - `main/display/lcd_display.*` and `main/display/watch_ui.*`: the round watch UI and voice orb.
-- `main/display/emote_display.*`: Classic emote face; not built here.
+- `main/display/bloub/`: the call-face character drawn into the orb canvas.
 - `main/mcp_server.*`: device-side MCP tools and dispatch (not yet wired to Apollo).
 - `main/Kconfig.projbuild` / `main/CMakeLists.txt`: trimmed to the single board and es-ES/en-US.
 - `scripts/build.py`: canonical build entry point.
@@ -59,7 +58,7 @@ Never toggle DTR/RTS manually on the serial port (ROM download-mode trap); openi
 ## Validation
 
 - Audio changes: verify capture, playback, wake word, interruption, and reconnect on the device.
-- UI/asset changes: verify on the device; the emote engine only re-flushes dirty areas, so overlay bugs hide until a full redraw.
+- UI/asset changes: verify on the device; the orb only redraws what changed, so overlay bugs can hide until a full redraw.
 - Always report what was tested and what still needs physical hardware. A successful build is not hardware validation.
 
 ## Authoritative Documentation

@@ -78,10 +78,7 @@ public:
     virtual void SendStopListening();
     virtual void SendAbortSpeaking(AbortReason reason);
     virtual void SendMcpMessage(const std::string& message);
-    // Touch gestures have no xiaozhi equivalent, so this is a no-op unless the
-    // protocol in use understands them.
-    virtual void SendGesture(const std::string& gesture) { (void)gesture; }
-    // Same story as gestures: only Apollo has a telemetry message.
+    // Only Apollo Classic had a telemetry message; Codex Voice ignores this.
     virtual void SendTelemetry(const DeviceTelemetry& telemetry) { (void)telemetry; }
 
     virtual void SendPlaybackAck(uint32_t played_milliseconds) { (void)played_milliseconds; }
@@ -108,7 +105,6 @@ protected:
     virtual bool SendText(const std::string& text) = 0;
     virtual void SetError(const std::string& message);
     virtual bool IsTimeout() const;
-    static void AddTextFontCapabilities(cJSON* root);
 };
 
 #endif  // PROTOCOL_H

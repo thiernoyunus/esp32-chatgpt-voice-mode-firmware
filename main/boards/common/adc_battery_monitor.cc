@@ -40,28 +40,11 @@ AdcBatteryMonitor::AdcBatteryMonitor(adc_unit_t adc_unit, adc_channel_t adc_chan
         adc_cfg.charging_detect_user_data = nullptr;
     }
     adc_battery_estimation_handle_ = adc_battery_estimation_create(&adc_cfg);
-
-    // Initialize timer
-    esp_timer_create_args_t timer_cfg = {
-        .callback = [](void *arg) {
-            AdcBatteryMonitor *self = (AdcBatteryMonitor *)arg;
-            self->CheckBatteryStatus();
-        },
-        .arg = this,
-        .name = "adc_battery_monitor",
-    };
-    ESP_ERROR_CHECK(esp_timer_create(&timer_cfg, &timer_handle_));
-    ESP_ERROR_CHECK(esp_timer_start_periodic(timer_handle_, 1000000));
 }
 
 AdcBatteryMonitor::~AdcBatteryMonitor() {
     if (adc_battery_estimation_handle_) {
         ESP_ERROR_CHECK(adc_battery_estimation_destroy(adc_battery_estimation_handle_));
-    }
-    
-    if (timer_handle_) {
-        esp_timer_stop(timer_handle_);
-        esp_timer_delete(timer_handle_);
     }
 }
 
@@ -99,18 +82,4 @@ uint8_t AdcBatteryMonitor::GetBatteryLevel() {
         return 100; // 出错时返回默认值
     }
     return (uint8_t)capacity;
-}
-
-void AdcBatteryMonitor::OnChargingStatusChanged(std::function<void(bool)> callback) {
-    on_charging_status_changed_ = callback;
-}
-
-void AdcBatteryMonitor::CheckBatteryStatus() {
-    bool new_charging_status = IsCharging();
-    if (new_charging_status != is_charging_) {
-        is_charging_ = new_charging_status;
-        if (on_charging_status_changed_) {
-            on_charging_status_changed_(is_charging_);
-        }
-    }
 }

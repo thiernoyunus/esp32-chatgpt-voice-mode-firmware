@@ -67,19 +67,6 @@ void Button::OnPressUp(std::function<void()> callback) {
     }, this);
 }
 
-void Button::OnLongPress(std::function<void()> callback) {
-    if (button_handle_ == nullptr) {
-        return;
-    }
-    on_long_press_ = callback;
-    iot_button_register_cb(button_handle_, BUTTON_LONG_PRESS_START, nullptr, [](void* handle, void* usr_data) {
-        Button* button = static_cast<Button*>(usr_data);
-        if (button->on_long_press_) {
-            button->on_long_press_();
-        }
-    }, this);
-}
-
 void Button::OnClick(std::function<void()> callback) {
     if (button_handle_ == nullptr) {
         return;
@@ -89,19 +76,6 @@ void Button::OnClick(std::function<void()> callback) {
         Button* button = static_cast<Button*>(usr_data);
         if (button->on_click_) {
             button->on_click_();
-        }
-    }, this);
-}
-
-void Button::OnDoubleClick(std::function<void()> callback) {
-    if (button_handle_ == nullptr) {
-        return;
-    }
-    on_double_click_ = callback;
-    iot_button_register_cb(button_handle_, BUTTON_DOUBLE_CLICK, nullptr, [](void* handle, void* usr_data) {
-        Button* button = static_cast<Button*>(usr_data);
-        if (button->on_double_click_) {
-            button->on_double_click_();
         }
     }, this);
 }

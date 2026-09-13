@@ -105,7 +105,6 @@ public:
     virtual std::string GetDeviceStatusJson() override;
 
     void EnterWifiConfigMode() override;
-    bool IsInWifiConfigMode() const;
 
     // ===== Board overrides: Wi-Fi inventory + raw-mode queries =====
     std::vector<std::string> GetSavedWifiNetworks() override;

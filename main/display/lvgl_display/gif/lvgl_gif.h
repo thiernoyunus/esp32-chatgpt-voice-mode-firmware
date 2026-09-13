@@ -39,35 +39,9 @@ public:
     void Stop();
 
     /**
-     * Check if GIF is currently playing
-     */
-    bool IsPlaying() const;
-
-    /**
      * Check if GIF was loaded successfully
      */
     bool IsLoaded() const;
-
-    /**
-     * Get loop count
-     */
-    int32_t GetLoopCount() const;
-
-    /**
-     * Set loop count
-     */
-    void SetLoopCount(int32_t count);
-
-    /**
-     * Get loop delay in milliseconds (delay between loops)
-     */
-    uint32_t GetLoopDelay() const;
-
-    /**
-     * Set loop delay in milliseconds (delay between loops)
-     * @param delay_ms Delay in milliseconds before starting next loop. 0 means no delay.
-     */
-    void SetLoopDelay(uint32_t delay_ms);
 
     /**
      * Get GIF dimensions

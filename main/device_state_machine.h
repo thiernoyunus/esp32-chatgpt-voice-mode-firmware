@@ -36,11 +36,6 @@ public:
     bool TransitionTo(DeviceState new_state);
 
     /**
-     * Check if transition to target state is valid from current state
-     */
-    bool CanTransitionTo(DeviceState target) const;
-
-    /**
      * State change callback type
      * Parameters: old_state, new_state
      */
@@ -52,11 +47,6 @@ public:
      * @return listener id for removal
      */
     int AddStateChangeListener(StateCallback callback);
-
-    /**
-     * Remove a state change listener by id
-     */
-    void RemoveStateChangeListener(int listener_id);
 
     /**
      * Get state name string for logging

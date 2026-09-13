@@ -119,36 +119,8 @@ void LvglGif::Stop() {
     }
 }
 
-bool LvglGif::IsPlaying() const {
-    return playing_;
-}
-
 bool LvglGif::IsLoaded() const {
     return loaded_;
-}
-
-int32_t LvglGif::GetLoopCount() const {
-    if (!loaded_ || !gif_) {
-        return -1;
-    }
-    return gif_->loop_count;
-}
-
-void LvglGif::SetLoopCount(int32_t count) {
-    if (!loaded_ || !gif_) {
-        ESP_LOGW(TAG, "GIF not loaded, cannot set loop count");
-        return;
-    }
-    gif_->loop_count = count;
-}
-
-uint32_t LvglGif::GetLoopDelay() const {
-    return loop_delay_ms_;
-}
-
-void LvglGif::SetLoopDelay(uint32_t delay_ms) {
-    loop_delay_ms_ = delay_ms;
-    ESP_LOGD(TAG, "Loop delay set to %lu ms", delay_ms);
 }
 
 uint16_t LvglGif::width() const {
