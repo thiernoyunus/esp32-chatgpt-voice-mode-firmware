@@ -77,8 +77,12 @@ void Icon(lv_obj_t* parent, const lv_image_dsc_t* source) {
             lv_obj_set_size(image, 48, 48);            // match rendered size
         }
     }
-    lv_obj_set_style_image_recolor(image, lv_color_white(), 0);
-    lv_obj_set_style_image_recolor_opa(image, LV_OPA_COVER, 0);
+    // Alpha-only icons carry shape and are tinted here; a full-colour one
+    // (the Codex mark) already has its own gradient and must be left alone.
+    if (source->header.cf == LV_COLOR_FORMAT_A8) {
+        lv_obj_set_style_image_recolor(image, lv_color_white(), 0);
+        lv_obj_set_style_image_recolor_opa(image, LV_OPA_COVER, 0);
+    }
     lv_obj_remove_flag(image, LV_OBJ_FLAG_CLICKABLE);
     lv_obj_center(image);
 }
@@ -254,7 +258,8 @@ void WatchUi::Show(Page page) {
     case Page::Home: {
         clock_=Label(shell_,time_.c_str());lv_obj_align(clock_,LV_ALIGN_TOP_MID,0,30);
         // ChatGPT: show voice page but don't auto-connect; user taps orb to connect
-        Button(shell_,74,82,96,96,"",&watch_icons::chatgpt,[this]{Show(Page::Voice);},kAccent);
+        // White tile: the logo's own rounded square, with the glyph on top.
+        Button(shell_,74,82,96,96,"",&watch_icons::codex,[this]{Show(Page::Voice);},0xFFFFFF);
         Button(shell_,190,82,96,96,"",&watch_icons::settings,[this]{Show(Page::Settings);Emit(Action::Refresh);},0x424D61);
         Button(shell_,74,212,96,96,"",&watch_icons::clock,[this]{Show(Page::Clock);},0x3354A4);
         // Home tile labels — 3 tiles centred in the chord-safe area
