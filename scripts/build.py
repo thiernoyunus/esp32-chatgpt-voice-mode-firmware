@@ -376,11 +376,6 @@ def _wake_word_sdkconfig_options(
 
 _BOARDS_DIR = Path("main/boards")
 
-_DISPLAY_STYLE_SYMBOLS = {
-    "default": "CONFIG_USE_DEFAULT_MESSAGE_STYLE",
-    "wechat": "CONFIG_USE_WECHAT_MESSAGE_STYLE",
-    "emote": "CONFIG_USE_EMOTE_MESSAGE_STYLE",
-}
 _DYNAMIC_CAMERA_MIRROR_BOARD_CONFIGS = {
     # These boards intentionally change orientation at runtime according to the
     # detected sensor or persisted device state. A compile-time override would
@@ -514,36 +509,13 @@ def _build_option_definitions(
         })
         break
 
-    # Message styles are implemented by the color LCD display path. OLED and
-    # no-display boards deliberately do not expose a selector that has no effect.
+    # There is one display style, so only the multiline toggle is selectable.
     if re.search(r"\b[A-Za-z0-9_]*LcdDisplay\b", source):
-        style_choice = _kconfig_choice("DISPLAY_STYLE")
-        emote_boards = _kconfig_config_board_dependencies("USE_EMOTE_MESSAGE_STYLE")
-        style_choices = [
-            {"value": "default", "label": "Default"},
-            {"value": "wechat", "label": "WeChat"},
-        ]
-        if board_config in emote_boards:
-            style_choices.append({"value": "emote", "label": "Emote animation"})
-        style_default = "default"
-        selected_style = _selected_choice_default(style_choice, assignments)
-        for value, symbol in _DISPLAY_STYLE_SYMBOLS.items():
-            if symbol == f"CONFIG_{selected_style}":
-                style_default = value
-                break
-        definitions.extend((
-            {
-                "key": "display_style",
-                "type": "select",
-                "default": style_default,
-                "choices": style_choices,
-            },
-            {
-                "key": "multiline_chat",
-                "type": "boolean",
-                "default": assignments.get("CONFIG_USE_MULTILINE_CHAT_MESSAGE") == "y",
-            },
-        ))
+        definitions.append({
+            "key": "multiline_chat",
+            "type": "boolean",
+            "default": assignments.get("CONFIG_USE_MULTILINE_CHAT_MESSAGE") == "y",
+        })
 
     aec_boards = _kconfig_config_board_dependencies("USE_DEVICE_AEC")
     if board_config in aec_boards:
@@ -632,9 +604,6 @@ def _normalize_build_options(
                     f"Build option {key} must be one of: {', '.join(sorted(allowed))}"
                 )
         normalized[key] = value
-
-    if normalized.get("display_style") != "default" and "multiline_chat" in normalized:
-        normalized["multiline_chat"] = False
     return normalized
 
 
@@ -656,29 +625,6 @@ def _build_options_sdkconfig(
             # it requires source-level panel configuration, but it is still a
             # sibling in the Kconfig choice and must be disabled explicitly.
             result.append("CONFIG_LCD_CUSTOM=n")
-
-    if "display_style" in options:
-        selected = options["display_style"]
-        for choice in by_key["display_style"]["choices"]:
-            value = choice["value"]
-            symbol = _DISPLAY_STYLE_SYMBOLS[value]
-            result.append(f"{symbol}={'y' if value == selected else 'n'}")
-        flash_symbols = (
-            "CONFIG_FLASH_NONE_ASSETS",
-            "CONFIG_FLASH_DEFAULT_ASSETS",
-            "CONFIG_FLASH_CUSTOM_ASSETS",
-            "CONFIG_FLASH_EXPRESSION_ASSETS",
-        )
-        if selected == "emote" and base_assignments.get("CONFIG_FLASH_CUSTOM_ASSETS") != "y":
-            result.extend(
-                f"{symbol}={'y' if symbol == 'CONFIG_FLASH_EXPRESSION_ASSETS' else 'n'}"
-                for symbol in flash_symbols
-            )
-        elif selected != "emote" and base_assignments.get("CONFIG_FLASH_EXPRESSION_ASSETS") == "y":
-            result.extend(
-                f"{symbol}={'y' if symbol == 'CONFIG_FLASH_DEFAULT_ASSETS' else 'n'}"
-                for symbol in flash_symbols
-            )
 
     if "multiline_chat" in options:
         result.append(f"CONFIG_USE_MULTILINE_CHAT_MESSAGE={'y' if options['multiline_chat'] else 'n'}")

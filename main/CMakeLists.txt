@@ -22,9 +22,7 @@ set(SOURCES "audio/audio_codec.cc"
             "display/bloub/bloub_decor.c"
             "display/bloub/bloub_states.c"
             "display/watch_icons.cc"
-            "display/oled_display.cc"
             "display/lvgl_display/lvgl_display.cc"
-            "display/emote_display.cc"
             "display/lvgl_display/emoji_collection.cc"
             "display/lvgl_display/lvgl_theme.cc"
             "display/lvgl_display/lvgl_font.cc"
@@ -202,28 +200,6 @@ if(CONFIG_APOLLO_CODEX_VOICE)
     list(APPEND SOURCES "protocols/codex_voice_protocol.cc")
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA espressif__esp_peer)
 endif()
-if(BOARD_TYPE STREQUAL "m5stack-stick-s3")
-    list(APPEND MAIN_PRIV_REQUIRES_EXTRA
-        m5stack__m5pm1
-    )
-endif()
-if(CONFIG_BOARD_TYPE_ESP_SPOT_S3 OR CONFIG_BOARD_TYPE_ESP_SPOT_C5 OR CONFIG_BOARD_TYPE_ESP_VOCAT)
-    list(APPEND MAIN_PRIV_REQUIRES_EXTRA
-        espressif__bmi270_sensor
-    )
-endif()
-if(CONFIG_BOARD_TYPE_ESP_VOCAT AND IDF_VERSION_MAJOR LESS 6)
-    list(APPEND MAIN_PRIV_REQUIRES_EXTRA
-        espressif__touch_slider_sensor
-        espressif__touch_button_sensor
-    )
-endif()
-if(CONFIG_BOARD_TYPE_ESP32_P4_FUNCTION_EV_BOARD)
-    list(APPEND MAIN_PRIV_REQUIRES_EXTRA
-        esp_driver_sdmmc
-        sdmmc
-    )
-endif()
 set(WAKE_WORD_MODEL_EMBED "")
 if(CONFIG_USE_MICRO_WAKE_WORD)
     set(MICRO_WAKE_WORD_MODEL "hey_apolo.tflite" CACHE STRING "Model filename under main/assets/wakewords")
@@ -315,101 +291,6 @@ find_component_by_pattern("xiaozhi-fonts" NOTO_FONTS_COMPONENT NOTO_FONTS_COMPON
 if(NOTO_FONTS_COMPONENT_PATH)
     set(NOTO_FONTS_PATH "${NOTO_FONTS_COMPONENT_PATH}")
 endif()
-
-if(CONFIG_BOARD_TYPE_ESP_VOCAT)
-    find_component_by_pattern("esp_emote_assets" EMOTE_ASSETS_COMPONENT EMOTE_ASSETS_PATH)
-    if(EMOTE_ASSETS_PATH)
-        file(REMOVE_RECURSE "${ESP_VOCAT_ASSETS_STAGING}")
-        file(REMOVE
-            "${CMAKE_BINARY_DIR}/expression_assets.bin"
-            "${CMAKE_BINARY_DIR}/expression_assets.bin.validated"
-        )
-        file(MAKE_DIRECTORY "${ESP_VOCAT_ASSETS_STAGING}/360_360")
-        file(MAKE_DIRECTORY "${ESP_VOCAT_ASSETS_STAGING}/emoji_large")
-        file(COPY "${EMOTE_ASSETS_PATH}/emoji_large/" DESTINATION "${ESP_VOCAT_ASSETS_STAGING}/emoji_large")
-        file(COPY "${EMOTE_ASSETS_PATH}/360_360/layout.json" DESTINATION "${ESP_VOCAT_ASSETS_STAGING}/360_360")
-        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/assets/360_360/emote.json"
-             DESTINATION "${ESP_VOCAT_ASSETS_STAGING}/360_360")
-        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/emoji/low_battery.eaf"
-             DESTINATION "${ESP_VOCAT_ASSETS_STAGING}/emoji_large")
-        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/emoji/battery_connected.eaf"
-             DESTINATION "${ESP_VOCAT_ASSETS_STAGING}/emoji_large")
-        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/assets/360_360/emote.json"
-            "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/emoji/low_battery.eaf"
-            "${CMAKE_CURRENT_SOURCE_DIR}/boards/espressif/esp-vocat/emoji/battery_connected.eaf"
-        )
-    else()
-        message(WARNING "esp_emote_assets component not found; ESP-VoCat custom emotes will be skipped")
-    endif()
-endif()
-
-if(CONFIG_BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85C AND CONFIG_USE_EMOTE_MESSAGE_STYLE)
-    find_component_by_pattern("esp_emote_assets" EMOTE_ASSETS_COMPONENT EMOTE_ASSETS_PATH)
-    if(EMOTE_ASSETS_PATH)
-        # Everything but emote.json comes straight from the component; only the
-        # emotion mapping is ours, so idle animations actually loop.
-        file(REMOVE_RECURSE "${APOLLO_ASSETS_STAGING}")
-        file(REMOVE
-            "${CMAKE_BINARY_DIR}/expression_assets.bin"
-            "${CMAKE_BINARY_DIR}/expression_assets.bin.validated"
-        )
-        file(MAKE_DIRECTORY "${APOLLO_ASSETS_STAGING}/360_360")
-        file(MAKE_DIRECTORY "${APOLLO_ASSETS_STAGING}/emoji_large")
-        # Artwork and config stay upstream's; the emotion mapping and the layout
-        # are ours (the layout drops the clock the engine paints over the face).
-        file(COPY "${EMOTE_ASSETS_PATH}/emoji_large/" DESTINATION "${APOLLO_ASSETS_STAGING}/emoji_large")
-        file(COPY "${EMOTE_ASSETS_PATH}/360_360/config.json" DESTINATION "${APOLLO_ASSETS_STAGING}/360_360")
-        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/waveshare/esp32-s3-touch-lcd-1.85c/assets/360_360/emote.json"
-             DESTINATION "${APOLLO_ASSETS_STAGING}/360_360")
-        file(COPY "${CMAKE_CURRENT_SOURCE_DIR}/boards/waveshare/esp32-s3-touch-lcd-1.85c/assets/360_360/layout.json"
-             DESTINATION "${APOLLO_ASSETS_STAGING}/360_360")
-        set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS
-            "${CMAKE_CURRENT_SOURCE_DIR}/boards/waveshare/esp32-s3-touch-lcd-1.85c/assets/360_360/emote.json"
-            "${CMAKE_CURRENT_SOURCE_DIR}/boards/waveshare/esp32-s3-touch-lcd-1.85c/assets/360_360/layout.json"
-        )
-    else()
-        message(WARNING "esp_emote_assets not found; Apollo emote mapping will be skipped")
-    endif()
-endif()
-
-if(CONFIG_BOARD_TYPE_ESP_HI)
-set(URL "https://github.com/espressif2022/image_player/raw/main/test_apps/test_8bit")
-set(EMOJI_DIR "${CMAKE_BINARY_DIR}/emoji")
-file(MAKE_DIRECTORY ${EMOJI_DIR})
-
-# List all files to download
-set(FILES_TO_DOWNLOAD "")
-list(APPEND FILES_TO_DOWNLOAD "Anger_enter.aaf" "Anger_loop.aaf" "Anger_return.aaf")
-list(APPEND FILES_TO_DOWNLOAD "happy_enter.aaf" "happy_loop.aaf" "happ_return.aaf")
-list(APPEND FILES_TO_DOWNLOAD "sad_enter.aaf" "sad_loop.aaf" "sad_return.aaf")
-list(APPEND FILES_TO_DOWNLOAD "scorn_enter.aaf" "scorn_loop.aaf" "scorn_return.aaf")
-list(APPEND FILES_TO_DOWNLOAD "left_enter.aaf" "left_loop.aaf" "left_return.aaf")
-list(APPEND FILES_TO_DOWNLOAD "right_enter.aaf" "right_loop.aaf" "right_return.aaf")
-list(APPEND FILES_TO_DOWNLOAD "asking.aaf" "blink_once.aaf" "blink_quick.aaf")
-list(APPEND FILES_TO_DOWNLOAD "connecting.aaf" "panic_enter.aaf" "panic_loop.aaf")
-list(APPEND FILES_TO_DOWNLOAD "panic_return.aaf" "wake.aaf")
-
-foreach(FILENAME IN LISTS FILES_TO_DOWNLOAD)
-    set(REMOTE_FILE "${URL}/${FILENAME}")
-    set(LOCAL_FILE "${EMOJI_DIR}/${FILENAME}")
-
-    # Check if local file exists
-    if(EXISTS ${LOCAL_FILE})
-        message(STATUS "File ${FILENAME} already exists, skipping download")
-    else()
-        message(STATUS "Downloading ${FILENAME}")
-        file(DOWNLOAD ${REMOTE_FILE} ${LOCAL_FILE}
-             STATUS DOWNLOAD_STATUS)
-        list(GET DOWNLOAD_STATUS 0 STATUS_CODE)
-        if(NOT STATUS_CODE EQUAL 0)
-            message(FATAL_ERROR "Failed to download ${FILENAME} from ${URL}")
-        endif()
-    endif()
-endforeach()
-
-endif()
-
 
 # Function to build default assets based on configuration
 function(build_default_assets_bin)
@@ -547,18 +428,6 @@ if ("${size}" AND "${offset}")
         get_assets_local_file("${CONFIG_CUSTOM_ASSETS_FILE}" ASSETS_LOCAL_FILE)
         esptool_py_flash_to_partition(flash "assets" "${ASSETS_LOCAL_FILE}")
         message(STATUS "Custom assets flash configured: ${ASSETS_LOCAL_FILE} -> assets partition")
-    elseif(CONFIG_FLASH_EXPRESSION_ASSETS)
-        set(ASSETS_NAME "expression_assets")
-        set(ASSETS_PARTITION "assets")
-        set(ASSETS_FILE "${CMAKE_BINARY_DIR}/${ASSETS_NAME}.bin")
-
-        if(EMOTE_EXTERNAL_PATH)
-            build_speaker_assets_bin("${ASSETS_PARTITION}" ${EMOTE_RESOLUTION} ${ASSETS_FILE} ${CONFIG_MMAP_FILE_NAME_LENGTH} "${EMOTE_EXTERNAL_PATH}")
-        else()
-            build_speaker_assets_bin("${ASSETS_PARTITION}" ${EMOTE_RESOLUTION} ${ASSETS_FILE} ${CONFIG_MMAP_FILE_NAME_LENGTH})
-        endif()
-        message(STATUS "Generated emote assets: ${ASSETS_FILE} -> ${ASSETS_PARTITION} partition")
-        esptool_py_flash_to_partition(flash "${ASSETS_PARTITION}" "${ASSETS_FILE}")
     elseif(CONFIG_FLASH_NONE_ASSETS)
         message(STATUS "Assets flashing disabled (FLASH_NONE_ASSETS)")
     endif()

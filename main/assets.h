@@ -11,9 +11,7 @@
 #include <map>
 #include <string>
 
-#if HAVE_LVGL
 #include <spi_flash_mmap.h>
-#endif
 
 struct Asset {
     size_t size;
@@ -81,15 +79,6 @@ private:
         esp_partition_mmap_handle_t mmap_handle_ = 0;
         const char* mmap_root_ = nullptr;
         bool checksum_valid_ = false;
-    };
-
-    class EmoteStrategy : public AssetStrategy {
-    public:
-        bool Apply(Assets* assets, bool refresh_display_theme = true) override;
-        bool InitializePartition(Assets* assets) override;
-        void UnApplyPartition(Assets* assets) override;
-        bool GetAssetData(Assets* assets, const std::string& name, void*& ptr,
-                          size_t& size) override;
     };
 
     // Strategy instance

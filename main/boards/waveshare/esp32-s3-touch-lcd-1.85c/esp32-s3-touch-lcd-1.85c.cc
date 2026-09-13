@@ -2,9 +2,6 @@
 #include "codecs/no_audio_codec.h"
 #include "codecs/box_audio_codec.h"
 #include "display/lcd_display.h"
-#if CONFIG_USE_EMOTE_MESSAGE_STYLE
-#include "display/emote_display.h"
-#endif
 #include "system_reset.h"
 #include "application.h"
 #include "adc_battery_monitor.h"
@@ -360,14 +357,8 @@ private:
         esp_lcd_panel_swap_xy(panel, DISPLAY_SWAP_XY);
         esp_lcd_panel_mirror(panel, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y);
 
-#if CONFIG_USE_EMOTE_MESSAGE_STYLE
-        // Animated eyes instead of an emoji glyph. Same panel and resolution as
-        // the esp-vocat board, so the 360x360 emote assets drop straight in.
-        display_ = new emote::EmoteDisplay(panel, panel_io, DISPLAY_WIDTH, DISPLAY_HEIGHT);
-#else
         display_ = new SpiLcdDisplay(panel_io, panel,
                                     DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
-#endif
     }
 
 #ifdef CONFIG_APOLLO_PROTOCOL

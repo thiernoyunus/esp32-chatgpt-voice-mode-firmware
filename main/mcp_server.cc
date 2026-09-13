@@ -12,7 +12,6 @@
 
 #include "application.h"
 #include "display.h"
-#include "oled_display.h"
 #include "board.h"
 #include "settings.h"
 #include "lvgl_theme.h"
@@ -77,7 +76,6 @@ void McpServer::AddCommonTools() {
             });
     }
 
-#ifdef HAVE_LVGL
     auto display = board.GetDisplay();
     if (display && display->GetTheme() != nullptr) {
         AddTool("self.screen.set_theme",
@@ -96,7 +94,6 @@ void McpServer::AddCommonTools() {
                 return false;
             });
     }
-#endif
 
     // Restore the original tools list to the end of the tools list
     tools_.insert(tools_.end(), original_tools.begin(), original_tools.end());
@@ -160,7 +157,6 @@ void McpServer::AddUserOnlyTools() {
             return new ImageContent("image/jpeg", jpeg_data);
         });
 
-#ifdef HAVE_LVGL
     auto lvgl_display = dynamic_cast<LvglDisplay*>(display);
     if (lvgl_display) {
         AddUserOnlyTool("self.screen.get_info", "Information about the screen, including width, height, etc.",
@@ -169,11 +165,7 @@ void McpServer::AddUserOnlyTools() {
                 cJSON *json = cJSON_CreateObject();
                 cJSON_AddNumberToObject(json, "width", lvgl_display->width());
                 cJSON_AddNumberToObject(json, "height", lvgl_display->height());
-                if (dynamic_cast<OledDisplay*>(lvgl_display)) {
-                    cJSON_AddBoolToObject(json, "monochrome", true);
-                } else {
-                    cJSON_AddBoolToObject(json, "monochrome", false);
-                }
+                cJSON_AddBoolToObject(json, "monochrome", false);
                 return json;
             });
 
@@ -273,7 +265,6 @@ void McpServer::AddUserOnlyTools() {
             });
 #endif // CONFIG_LV_USE_SNAPSHOT
     }
-#endif // HAVE_LVGL
 
     // Assets download url (always registered — Settings storage works regardless of partition layout)
     AddUserOnlyTool("self.assets.set_download_url", "Set the download url for the assets",

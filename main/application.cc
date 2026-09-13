@@ -18,9 +18,6 @@
 #else
 #include "apollo_protocol.h"
 #endif
-#if CONFIG_USE_EMOTE_MESSAGE_STYLE
-#include "display/emote_display.h"
-#endif
 
 #include <driver/gpio.h>
 #include <esp_log.h>
@@ -35,12 +32,6 @@
 #include <cstring>
 
 #define TAG "Application"
-
-#if defined(CONFIG_APOLLO_PROTOCOL) && defined(CONFIG_USE_EMOTE_MESSAGE_STYLE)
-// Long enough that the idle animation finishes and the face rests before it
-// plays again.
-static constexpr int kIdleBlinkIntervalSeconds = 12;
-#endif
 
 #ifdef CONFIG_APOLLO_PROTOCOL
 // The backlight is the single biggest draw on this board, so it goes first.
@@ -392,17 +383,6 @@ void Application::Run() {
             if (protocol_ != nullptr && protocol_->IsAudioChannelOpened() &&
                 GetDeviceState() == kDeviceStateSpeaking) {
                 protocol_->SendPlaybackAck(audio_service_.played_tts_milliseconds());
-            }
-#endif
-
-#if defined(CONFIG_APOLLO_PROTOCOL) && defined(CONFIG_USE_EMOTE_MESSAGE_STYLE)
-            // neutral.eaf is one blink, not an idle loop: looping it blinks
-            // nonstop, which reads as a nervous tic. Play it once and replay it
-            // on a human-ish cadence so the face rests in between. Pointless
-            // while the screen is dark.
-            if (!is_screen_asleep_ && clock_ticks_ % kIdleBlinkIntervalSeconds == 0 &&
-                GetDeviceState() == kDeviceStateIdle) {
-                display->SetEmotion("neutral");
             }
 #endif
 

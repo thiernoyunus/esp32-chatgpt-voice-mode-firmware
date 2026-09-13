@@ -1046,7 +1046,6 @@ class BuildOptionTests(unittest.TestCase):
             "LCD_CUSTOM",
             {choice["value"] for choice in by_key["display_model"]["choices"]},
         )
-        self.assertIn("display_style", by_key)
         self.assertIn("multiline_chat", by_key)
 
         normalized = build._normalize_build_options(
@@ -1062,82 +1061,8 @@ class BuildOptionTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertIn("CONFIG_OLED_SH1106_128X64", config_header)
 
-    def test_non_default_style_disables_multiline_chat(self):
-        definitions = [
-            {
-                "key": "display_style",
-                "type": "select",
-                "default": "default",
-                "choices": [
-                    {"value": "default", "label": "Default"},
-                    {"value": "wechat", "label": "WeChat"},
-                ],
-            },
-            {"key": "multiline_chat", "type": "boolean", "default": True},
-        ]
 
-        normalized = build._normalize_build_options(
-            definitions,
-            {"display_style": "wechat", "multiline_chat": True},
-        )
 
-        self.assertFalse(normalized["multiline_chat"])
-
-    def test_display_style_only_writes_board_supported_choices(self):
-        definitions = [{
-            "key": "display_style",
-            "type": "select",
-            "default": "default",
-            "choices": [
-                {"value": "default", "label": "Default"},
-                {"value": "wechat", "label": "WeChat"},
-            ],
-        }]
-
-        options = build._build_options_sdkconfig(
-            definitions,
-            {"display_style": "wechat"},
-            {},
-        )
-
-        self.assertIn("CONFIG_USE_DEFAULT_MESSAGE_STYLE=n", options)
-        self.assertIn("CONFIG_USE_WECHAT_MESSAGE_STYLE=y", options)
-        self.assertNotIn("CONFIG_USE_EMOTE_MESSAGE_STYLE=n", options)
-
-    def test_esp_vocat_default_style_overrides_emote_board_defaults(self):
-        config = json.loads(
-            (ROOT / "main/boards/espressif/esp-vocat/config.json").read_text(
-                encoding="utf-8"
-            )
-        )
-        build_config = config["builds"][0]
-        board_config = build._resolve_board_config(
-            "espressif/esp-vocat",
-            config["target"],
-            build_config["sdkconfig_append"],
-            variant_name=build_config["name"],
-        )
-        definitions = build._build_option_definitions(
-            "espressif/esp-vocat",
-            config["target"],
-            board_config,
-            build_config,
-        )
-        normalized = build._normalize_build_options(
-            definitions,
-            {"display_style": "default", "multiline_chat": True},
-        )
-        options = build._build_options_sdkconfig(
-            definitions,
-            normalized,
-            build._sdkconfig_assignments(build_config["sdkconfig_append"]),
-        )
-
-        self.assertIn("CONFIG_USE_DEFAULT_MESSAGE_STYLE=y", options)
-        self.assertIn("CONFIG_USE_EMOTE_MESSAGE_STYLE=n", options)
-        self.assertIn("CONFIG_FLASH_DEFAULT_ASSETS=y", options)
-        self.assertIn("CONFIG_FLASH_EXPRESSION_ASSETS=n", options)
-        self.assertIn("CONFIG_USE_MULTILINE_CHAT_MESSAGE=y", options)
 
     def test_camera_mirror_guard_is_settable_by_build_defaults(self):
         kconfig = (ROOT / "main/Kconfig.projbuild").read_text(

@@ -83,8 +83,7 @@ config OTA_URL
 
 choice
     prompt "Flash Assets"
-    default FLASH_DEFAULT_ASSETS if !USE_EMOTE_MESSAGE_STYLE
-    default FLASH_EXPRESSION_ASSETS if USE_EMOTE_MESSAGE_STYLE
+    default FLASH_DEFAULT_ASSETS
     help
         Select the assets to flash.
 
@@ -92,12 +91,8 @@ choice
         bool "Do not flash assets"
     config FLASH_DEFAULT_ASSETS
         bool "Flash Default Assets"
-        depends on !USE_EMOTE_MESSAGE_STYLE
     config FLASH_CUSTOM_ASSETS
         bool "Flash Custom Assets"
-    config FLASH_EXPRESSION_ASSETS
-        bool "Flash Emote Assets"
-        depends on USE_EMOTE_MESSAGE_STYLE
 endchoice
 
 config CUSTOM_ASSETS_FILE
@@ -144,23 +139,9 @@ choice DISPLAY_ESP32S3_TOUCH_LCD_1_85C
 endchoice
 
 
-choice DISPLAY_STYLE
-    prompt "Select display style"
-    default USE_DEFAULT_MESSAGE_STYLE
-    help
-        Select display style for Xiaozhi device
-
-    config USE_DEFAULT_MESSAGE_STYLE
-        bool "Enable default message style"
-
-    config USE_WECHAT_MESSAGE_STYLE
-        bool "Enable WeChat Message Style"
-        depends on !APOLLO_CODEX_VOICE
-
-    config USE_EMOTE_MESSAGE_STYLE
-        bool "Emote animation style"
-        depends on BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85C && !APOLLO_CODEX_VOICE
-endchoice
+config USE_DEFAULT_MESSAGE_STYLE
+    bool
+    default y
 
 config USE_MULTILINE_CHAT_MESSAGE
     bool "Use multiline chat message display (default mode only)"
