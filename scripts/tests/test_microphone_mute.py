@@ -9,8 +9,10 @@ def main():
     main_path = Path(__file__).resolve().parents[2] / "main"
     source = (main_path / "audio/audio_service.cc").read_text()
     application = (main_path / "application.cc").read_text()
-    touch = application[application.index("void Application::OnVoiceTouchRelease("):
-                        application.index("\n#endif", application.index("void Application::OnVoiceTouchRelease("))]
+    # OnVoiceTouchRelease used to sit inside #ifdef CONFIG_APOLLO_CODEX_VOICE;
+    # that wrapper is gone, so stop at the next Application method instead.
+    touch_start = application.index("void Application::OnVoiceTouchRelease(")
+    touch = application[touch_start:application.index("\nvoid Application::ShowConfirm(", touch_start)]
     mute = source[source.index("void AudioService::SetMicrophoneMuted("):
                   source.index("void AudioService::EncodeWakeWord(")]
     guard = source[source.index("                        if (microphone_muted_ ||"):

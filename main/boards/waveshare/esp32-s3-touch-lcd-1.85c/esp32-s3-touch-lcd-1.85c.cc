@@ -362,14 +362,6 @@ private:
     }
 
 #ifdef CONFIG_APOLLO_PROTOCOL
-    // Tuned for a 360x360 round panel.
-    static constexpr int kTapMaxTravelPx = 30;
-    static constexpr int kSwipeMinTravelPx = 60;
-    static constexpr uint32_t kTapMaxMs = 400;
-    static constexpr uint32_t kDoubleTapWindowMs = 400;
-    // Just past kTapMaxMs, so a press only becomes push-to-talk once it is too
-    // long to still be a tap.
-    static constexpr uint32_t kHoldToTalkMs = 450;
     static constexpr uint32_t kTouchPollMs = 20;
     static constexpr int kMaxTouchReadFailures = 25;
 
@@ -467,10 +459,7 @@ private:
         bool swallow_touch = false;
         int consecutive_read_failures = 0;
         bool auto_sleep_rearmed = false;
-        int start_x = 0, start_y = 0, last_x = 0, last_y = 0;
-        uint32_t press_started_ms = 0;
-        uint32_t pending_tap_ms = 0;  // 0 means no single tap awaiting its window
-        bool is_hold_talking = false;
+        int last_x = 0, last_y = 0;
 
         while (true) {
             uint32_t now_ms = (uint32_t)(esp_timer_get_time() / 1000);
@@ -487,13 +476,6 @@ private:
                         auto_sleep_rearmed = true;
                         consecutive_read_failures = 0;
                     } else {
-                        // Never abandon a live push-to-talk hold. Without the
-                        // matching stop event, both the screen and server keep
-                        // listening after the touch task exits.
-                        if (is_hold_talking) {
-                            is_hold_talking = false;
-                            Application::GetInstance().StopListening();
-                        }
                         display_->FeedTouch(false, last_x, last_y);
                         ESP_LOGE(TAG, "Touch controller unresponsive, stopping gesture task");
                         vTaskDelete(nullptr);
@@ -508,7 +490,6 @@ private:
                 esp_lcd_touch_get_coordinates(touch_handle_, &x, &y, nullptr, &point_count, 1) &&
                 point_count > 0;
 
-#ifdef CONFIG_APOLLO_CODEX_VOICE
             // Feed the toolkit once per sample; never also dispatch legacy gestures.
             auto& app = Application::GetInstance();
             if (is_pressed && !was_pressed) {
@@ -523,132 +504,12 @@ private:
             if (!is_pressed) swallow_touch = false;
             was_pressed = is_pressed;
             vTaskDelay(pdMS_TO_TICKS(kTouchPollMs));
-            continue;
-#endif
-
-            // A live confirm screen owns the touch: the release hit-tests the
-            // two buttons immediately — waiting out the double-tap window would
-            // make them feel broken — and a press can no longer become
-            // push-to-talk. A hold that started before the screen appeared
-            // still finishes through the normal path below.
-            if (Application::GetInstance().IsConfirmActive() && !is_hold_talking) {
-                pending_tap_ms = 0;
-                if (is_pressed && !was_pressed) {
-                    start_x = last_x = x;
-                    start_y = last_y = y;
-                    press_started_ms = now_ms;
-                } else if (is_pressed) {
-                    last_x = x;
-                    last_y = y;
-                } else if (was_pressed) {
-                    ESP_LOGI(TAG, "Confirm release at (%d,%d)", last_x, last_y);
-                    Application::GetInstance().OnConfirmTouchRelease(last_x, last_y);
-                }
-                was_pressed = is_pressed;
-                vTaskDelay(pdMS_TO_TICKS(kTouchPollMs));
-                continue;
-            }
-
-            if (is_pressed && !was_pressed) {
-                start_x = last_x = x;
-                start_y = last_y = y;
-                press_started_ms = now_ms;
-            } else if (is_pressed) {
-                last_x = x;
-                last_y = y;
-                // Hold the screen to talk: start recording once the press is too
-                // long to be a tap, and keep going until the finger lifts. The
-                // finger has to stay put, or this would hijack a slow swipe.
-#ifndef CONFIG_APOLLO_CODEX_VOICE
-                if (!is_hold_talking && now_ms - press_started_ms >= kHoldToTalkMs &&
-                    abs(last_x - start_x) < kTapMaxTravelPx &&
-                    abs(last_y - start_y) < kTapMaxTravelPx) {
-                    is_hold_talking = true;
-                    pending_tap_ms = 0;
-                    auto& app = Application::GetInstance();
-                    // A hold on a dark screen should light it up and record, not
-                    // just light it up.
-                    app.NoteUserActivity();
-                    app.StartListening();
-                }
-#endif
-            } else if (was_pressed) {
-#ifndef CONFIG_APOLLO_CODEX_VOICE
-                if (is_hold_talking) {
-                    // Lifting the finger is what sends the turn.
-                    is_hold_talking = false;
-                    Application::GetInstance().StopListening();
-                    was_pressed = is_pressed;
-                    vTaskDelay(pdMS_TO_TICKS(kTouchPollMs));
-                    continue;
-                }
-#endif
-
-                int dx = last_x - start_x;
-                int dy = last_y - start_y;
-                uint32_t held_ms = now_ms - press_started_ms;
-
-                if (abs(dx) >= kSwipeMinTravelPx && abs(dx) > abs(dy)) {
-                    pending_tap_ms = 0;
-                    EmitGesture(dx > 0 ? "swipe_right" : "swipe_left");
-                } else if (held_ms <= kTapMaxMs && abs(dx) < kTapMaxTravelPx &&
-                           abs(dy) < kTapMaxTravelPx) {
-#ifdef CONFIG_APOLLO_CODEX_VOICE
-                    pending_tap_ms = 0;
-                    Application::GetInstance().OnVoiceTouchRelease(last_x, last_y);
-#else
-                    if (pending_tap_ms != 0) {
-                        pending_tap_ms = 0;
-                        EmitGesture("double_tap");
-                    } else {
-                        // Hold the single tap back: it only becomes a tap once
-                        // the double tap window closes without a second press.
-                        pending_tap_ms = now_ms;
-                    }
-#endif
-                }
-            }
-
-            if (pending_tap_ms != 0 && now_ms - pending_tap_ms > kDoubleTapWindowMs) {
-                pending_tap_ms = 0;
-                EmitGesture("tap");
-            }
-
-            was_pressed = is_pressed;
-            vTaskDelay(pdMS_TO_TICKS(kTouchPollMs));
         }
     }
 
-    void EmitGesture(const char* gesture) {
-        ESP_LOGI(TAG, "Touch gesture: %s", gesture);
-        Application::GetInstance().SendGesture(gesture);
-    }
 #endif
 
     void InitializeButtons() {
-#if defined(CONFIG_APOLLO_PROTOCOL) && !defined(CONFIG_APOLLO_CODEX_VOICE)
-        // Apollo is push-to-talk: its protocol is built around hold_start and
-        // hold_end, and holding the button is also the only way to bound an
-        // utterance while the wake word model (which supplies the VAD that
-        // auto-stop mode relies on) is unavailable.
-        boot_button_.OnPressDown([this]() {
-            auto& app = Application::GetInstance();
-            // Deliberately inert while starting: a press in that window used to
-            // drop the device into wifi config mode, which is a surprising way
-            // to lose a working setup.
-            if (app.GetDeviceState() == kDeviceStateStarting) {
-                return;
-            }
-            app.StartListening();
-        });
-
-        boot_button_.OnPressUp([this]() { Application::GetInstance().StopListening(); });
-
-        // Wifi config stays reachable, but not behind a long press: holding the
-        // button *is* the talk gesture, so a long press fires on every normal
-        // use. Three clicks cannot be triggered by accident that way.
-        boot_button_.OnMultipleClick([this]() { EnterWifiConfigMode(); }, 3);
-#else
         boot_button_.OnClick([this]() {
             auto& app = Application::GetInstance();
             if (app.GetDeviceState() == kDeviceStateStarting) {
@@ -657,10 +518,7 @@ private:
             }
             app.ToggleChatState();
         });
-#ifdef CONFIG_APOLLO_CODEX_VOICE
         boot_button_.OnMultipleClick([this]() { EnterWifiConfigMode(); }, 3);
-#endif
-#endif
     }
 
 public:

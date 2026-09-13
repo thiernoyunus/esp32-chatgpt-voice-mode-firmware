@@ -36,11 +36,7 @@
  * 
  */
 
-#ifdef CONFIG_APOLLO_CODEX_VOICE
 #define OPUS_FRAME_DURATION_MS 20
-#else
-#define OPUS_FRAME_DURATION_MS 60
-#endif
 /* Captured microphone frames waiting to be encoded. At 2 frames this is only
  * 40 ms of headroom, but the speaker write alone blocks for ~19 ms of every
  * 20 ms frame and can reach 34 ms, so one slow write plus a decode overruns it
@@ -145,13 +141,11 @@ public:
     void EnableVoiceProcessing(bool enable);
     void SetMicrophoneMuted(bool muted);
     bool IsMicrophoneMuted() const { return microphone_muted_.load(); }
-#ifdef CONFIG_APOLLO_CODEX_VOICE
     int TakeVoiceLevel() {
         const int input = input_voice_level_.exchange(0);
         const int output = output_voice_level_.exchange(0);
         return input > output ? input : output;
     }
-#endif
     void EnableAudioTesting(bool enable);
     void EnableDeviceAec(bool enable);
 
@@ -208,11 +202,9 @@ private:
     bool playback_drained_notified_ = true;
     uint32_t playback_generation_ = 0;
     std::atomic<bool> microphone_muted_{false};
-#ifdef CONFIG_APOLLO_CODEX_VOICE
     std::atomic<int> input_voice_level_{0}, output_voice_level_{0};
     // Last time real speech (not silence padding) went to the speaker.
     std::atomic<int64_t> last_loud_output_us_{0};
-#endif
     uint32_t microphone_generation_ = 0;
     // For server AEC
     std::deque<uint32_t> timestamp_queue_;

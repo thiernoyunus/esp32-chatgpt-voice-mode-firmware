@@ -25,7 +25,6 @@ set(SOURCES "audio/audio_codec.cc"
             "display/lvgl_display/jpg/image_to_jpeg.cpp"
             "protocols/protocol.cc"
             "protocols/text_glyph_payload.cc"
-            "protocols/apollo_protocol.cc"
             "mcp_server.cc"
             "system_info.cc"
             "application.cc"
@@ -184,7 +183,6 @@ file(GLOB COMMON_SOUNDS ${CMAKE_CURRENT_SOURCE_DIR}/assets/common/*.ogg)
 
 set(MAIN_PRIV_REQUIRES_EXTRA "")
 if(CONFIG_APOLLO_CODEX_VOICE)
-    list(REMOVE_ITEM SOURCES "protocols/apollo_protocol.cc")
     list(APPEND SOURCES "protocols/codex_voice_protocol.cc")
     list(APPEND MAIN_PRIV_REQUIRES_EXTRA espressif__esp_peer)
 endif()

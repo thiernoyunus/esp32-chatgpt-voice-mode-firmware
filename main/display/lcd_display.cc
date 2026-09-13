@@ -26,11 +26,9 @@
 #include <vector>
 
 #include "board.h"
-#ifdef CONFIG_APOLLO_CODEX_VOICE
 #include "application.h"
 #include <esp_heap_caps.h>
 #include <mbedtls/base64.h>
-#endif
 
 #define TAG "LcdDisplay"
 
@@ -39,7 +37,6 @@ LV_FONT_DECLARE(BUILTIN_ICON_FONT);
 LV_FONT_DECLARE(font_material_symbols_30_4);
 LV_FONT_DECLARE(font_noto_emoji_30_4);
 
-#ifdef CONFIG_APOLLO_CODEX_VOICE
 namespace {
 // Fluid shading ported from Rare UI's Fluid Orb: https://www.rareui.com/components/fluidorb
 // 30fps. The face alone was fine at 15 - it only blinks and drifts - but
@@ -118,7 +115,6 @@ VoiceStateCaption CaptionForDeviceState(DeviceState state, bool muted) {
 }
 
 }  // namespace
-#endif
 
 void LcdDisplay::InitializeLcdThemes() {
     auto text_font = std::make_shared<LvglBuiltInFont>(&BUILTIN_TEXT_FONT);
@@ -175,9 +171,7 @@ LcdDisplay::LcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel_handle_
     // Load theme from settings
     Settings settings("display", false);
     std::string theme_name = settings.GetString("theme", "light");
-#ifdef CONFIG_APOLLO_CODEX_VOICE
     theme_name = "dark";
-#endif
     current_theme_ = LvglThemeManager::GetInstance().GetTheme(theme_name);
 
     // Create a timer to hide the preview image
@@ -391,14 +385,12 @@ MipiLcdDisplay::MipiLcdDisplay(esp_lcd_panel_io_handle_t panel_io, esp_lcd_panel
 LcdDisplay::~LcdDisplay() {
     SetPreviewImage(nullptr);
 
-#ifdef CONFIG_APOLLO_CODEX_VOICE
     if (touch_input_) lv_indev_delete(touch_input_);
     watch_ui_.reset();
     if (voice_orb_timer_ != nullptr) {
         lv_timer_delete(voice_orb_timer_);
         voice_orb_timer_ = nullptr;
     }
-#endif
 
     // Clean up GIF controller
     if (gif_controller_) {
@@ -426,12 +418,10 @@ LcdDisplay::~LcdDisplay() {
     if (emoji_box_ != nullptr) {
         lv_obj_del(emoji_box_);
     }
-#ifdef CONFIG_APOLLO_CODEX_VOICE
     if (voice_orb_buffer_ != nullptr) {
         heap_caps_free(voice_orb_buffer_);
         voice_orb_buffer_ = nullptr;
     }
-#endif
     if (content_ != nullptr) {
         lv_obj_del(content_);
     }
@@ -675,7 +665,6 @@ void LcdDisplay::SetupUI() {
     lv_obj_add_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);  // Hide until there is content
 #endif
 
-#ifdef CONFIG_APOLLO_CODEX_VOICE
     // Keep text inside the circle, away from the clipped top and bottom edges.
     lv_obj_set_style_bg_color(screen, lv_color_black(), 0);
     lv_obj_set_style_bg_color(container_, lv_color_black(), 0);
@@ -814,7 +803,6 @@ void LcdDisplay::SetupUI() {
             voice_end_button_ = button;
         }
     }
-#endif
 
     low_battery_popup_ = lv_obj_create(screen);
     lv_obj_set_scrollbar_mode(low_battery_popup_, LV_SCROLLBAR_MODE_OFF);
@@ -925,13 +913,11 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
     }
     lv_anim_delete(chat_message_label_, nullptr);
     lv_label_set_text(chat_message_label_, content);
-#ifdef CONFIG_APOLLO_CODEX_VOICE
     /* One line carries both halves of the conversation, so they have to be
      * told apart by eye: the reply is what is being read out, so it is the one
      * in white, and what was heard sits back in grey. */
     lv_obj_set_style_text_color(chat_message_label_,
                                 lv_color_hex(strcmp(role, "user") == 0 ? kVoiceGray : 0xFFFFFF), 0);
-#endif
     // Show bottom_bar_ only when there is content (and subtitle is not globally hidden)
     if (bottom_bar_ != nullptr) {
         if (content == nullptr || content[0] == '\0') {
@@ -940,13 +926,6 @@ void LcdDisplay::SetChatMessage(const char* role, const char* content) {
             lv_obj_remove_flag(bottom_bar_, LV_OBJ_FLAG_HIDDEN);
         }
     }
-#if CONFIG_USE_MULTILINE_CHAT_MESSAGE && !defined(CONFIG_APOLLO_CODEX_VOICE)
-    // Re-align bottom_bar_ after text change so it stays anchored to the bottom
-    // as its height adapts to the wrapped content.
-    if (bottom_bar_ != nullptr) {
-        lv_obj_align(bottom_bar_, LV_ALIGN_BOTTOM_MID, 0, 0);
-    }
-#endif
 }
 
 void LcdDisplay::ClearChatMessages() {
@@ -960,7 +939,6 @@ void LcdDisplay::ClearChatMessages() {
     }
 }
 
-#ifdef CONFIG_APOLLO_CODEX_VOICE
 void LcdDisplay::SetVoiceModel(const char* name) {
     DisplayLockGuard lock(this);
     if (voice_model_label_ != nullptr) {
@@ -1481,12 +1459,9 @@ void LcdDisplay::RenderVoiceOrb(float seconds) {
     }
     lv_obj_invalidate(voice_orb_canvas_);
 }
-#endif
 
 void LcdDisplay::SetEmotion(const char* emotion) {
-#ifdef CONFIG_APOLLO_CODEX_VOICE
     return;
-#endif
     if (!setup_ui_called_) {
         ESP_LOGW(TAG, "SetEmotion('%s') called before SetupUI() - emotion will not be displayed!",
                  emotion);
@@ -1660,7 +1635,6 @@ void LcdDisplay::SetHideSubtitle(bool hide) {
     }
 }
 
-#ifdef CONFIG_APOLLO_CODEX_VOICE
 void LcdDisplay::FeedTouch(bool pressed, int x, int y) {
     touch_sample_.store((static_cast<uint32_t>(pressed) << 18) |
                        (static_cast<uint32_t>(std::clamp(y, 0, 359)) << 9) |
@@ -1733,4 +1707,3 @@ void LcdDisplay::HideConfirmScreen() {
         lv_obj_add_flag(confirm_root_, LV_OBJ_FLAG_HIDDEN);
     }
 }
-#endif

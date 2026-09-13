@@ -33,7 +33,6 @@ protected:
     esp_timer_handle_t preview_timer_ = nullptr;
     std::unique_ptr<LvglImage> preview_image_cached_ = nullptr;
     bool hide_subtitle_ = false;  // Control whether to hide chat messages/subtitles
-#ifdef CONFIG_APOLLO_CODEX_VOICE
     lv_obj_t* voice_root_ = nullptr;
     std::unique_ptr<WatchUi> watch_ui_;
     lv_indev_t* touch_input_ = nullptr;
@@ -89,7 +88,6 @@ protected:
     lv_obj_t* confirm_summary_ = nullptr;
     lv_obj_t* confirm_approve_btn_ = nullptr;
     lv_obj_t* confirm_reject_btn_ = nullptr;
-#endif
 
     void InitializeLcdThemes();
     virtual bool Lock(int timeout_ms = 0) override;
@@ -103,7 +101,6 @@ protected:
 public:
     ~LcdDisplay();
     virtual void SetEmotion(const char* emotion) override;
-#ifdef CONFIG_APOLLO_CODEX_VOICE
     void SetStatus(const char* status) override;
     void SetVoiceMicrophoneMuted(bool muted) override;
     void SetVoiceActivity(const char* activity, const char* icon = "none",
@@ -118,7 +115,6 @@ public:
     void UpdateStatusBar(bool update_all = false) override;
     void ShowConfirmScreen(const char* summary) override;
     void HideConfirmScreen() override;
-#endif
     virtual void SetChatMessage(const char* role, const char* content) override;
     virtual void ClearChatMessages() override;
     virtual void SetPreviewImage(std::unique_ptr<LvglImage> image) override;

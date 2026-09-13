@@ -17,7 +17,7 @@ def main():
     continuing = app[app.index("void Application::ContinueOpenAudioChannel("):
                      app.index("void Application::HandleStartListeningEvent()")]
     gain = audio[audio.index("namespace {"):audio.index("#define RATE_CVT_CFG")]
-    frame = audio_header[audio_header.index("#ifdef CONFIG_APOLLO_CODEX_VOICE\n#define OPUS_FRAME_DURATION_MS"):
+    frame = audio_header[audio_header.index("#define OPUS_FRAME_DURATION_MS"):
                          audio_header.index("#define MAX_ENCODE_TASKS_IN_QUEUE")]
     incoming = app[app.index("protocol_->OnIncomingAudio("):app.index("protocol_->OnAudioChannelOpened(")]
     # Copy whole live definitions, including nested lambdas; never duplicate their logic.
@@ -26,7 +26,6 @@ def main():
     opened = voice[voice.index("int CodexVoiceProtocol::OnDataChannelOpen("):
                    voice.index("int CodexVoiceProtocol::OnPeerData(")]
     harness = r'''
-#define CONFIG_APOLLO_CODEX_VOICE 1
 #include <algorithm>
 #include <cstdint>
 #include <memory>
@@ -40,11 +39,6 @@ def main():
 GAIN_CODE
 FRAME_CODE
 static_assert(OPUS_FRAME_DURATION_MS == 20);
-#undef OPUS_FRAME_DURATION_MS
-#undef CONFIG_APOLLO_CODEX_VOICE
-FRAME_CODE
-static_assert(OPUS_FRAME_DURATION_MS == 60);
-#define CONFIG_APOLLO_CODEX_VOICE 1
 struct AudioStreamPacket {};
 struct AudioService {
     int accepted = 0, resets = 0;

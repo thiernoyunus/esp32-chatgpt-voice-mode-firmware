@@ -204,7 +204,6 @@ public:
     // Called from the board's touch task. Opens the channel if needed, because
     // most gestures are useful precisely when the device is sitting idle.
     void SendGesture(const std::string& gesture);
-#ifdef CONFIG_APOLLO_CODEX_VOICE
     void OnVoiceTouchRelease(int x, int y);
     bool IsScreenAsleep() const { return is_screen_asleep_.load(); }
     void OnWatchAction(WatchUi::Action action, int value, const std::string& text,
@@ -214,7 +213,6 @@ private:
     bool voice_model_picker_open_ = false;
     size_t voice_model_page_ = 0;
 public:
-#endif
 
     // The confirm screen session. ShowConfirm and DismissConfirm are safe from
     // any task; the touch task polls IsConfirmActive and answers through

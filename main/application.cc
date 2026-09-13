@@ -10,14 +10,10 @@
 #include "settings.h"
 #include "system_info.h"
 #include "text_glyph_payload.h"
-#ifdef CONFIG_APOLLO_CODEX_VOICE
 #include "codex_voice_protocol.h"
 #include "display/voice_geometry.h"
 #include "display/lcd_display.h"
 #include "display/voice_character.h"
-#else
-#include "apollo_protocol.h"
-#endif
 
 #include <driver/gpio.h>
 #include <esp_log.h>
@@ -220,14 +216,12 @@ void Application::Run() {
             // A reply transcribed but never heard is the one failure a fresh
             // call fixes, and the message already promised it. Nothing did it.
             bool reopen = false;
-#ifdef CONFIG_APOLLO_CODEX_VOICE
             if (auto* voice = dynamic_cast<CodexVoiceProtocol*>(protocol_.get())) {
                 reopen = voice->TakeStallRecovery() && !call_end_requested_.load();
             }
             if (protocol_) {
                 protocol_->CloseAudioChannel();
             }
-#endif
             SetDeviceState(kDeviceStateIdle);
             // Going idle queues a state change whose handler blanks the screen
             // back to STANDBY. Drain it here, before the alert is drawn, or the
@@ -339,39 +333,14 @@ void Application::Run() {
             clock_ticks_++;
             auto display = Board::GetInstance().GetDisplay();
             display->UpdateStatusBar();
-#ifdef CONFIG_APOLLO_CODEX_VOICE
             if (clock_ticks_ % 3 == 0) RefreshWatchInfo();
-#endif
 
 #ifdef CONFIG_APOLLO_PROTOCOL
             if (GetDeviceState() == kDeviceStateIdle) {
                 idle_seconds_++;
-#ifdef CONFIG_APOLLO_CODEX_VOICE
                 if (screen_sleep_seconds_ > 0 && idle_seconds_ >= screen_sleep_seconds_) {
-#else
-                if (idle_seconds_ >= kScreenSleepAfterSeconds) {
-#endif
                     SleepScreen();
                 }
-#ifndef CONFIG_APOLLO_CODEX_VOICE
-                // Opening the channel on demand costs about three seconds, which
-                // is longer than a press-and-hold lasts: the turn would be over
-                // before the first sample was recorded. Reconnect while idle so
-                // the press finds the channel already open.
-                if (protocol_ != nullptr && !protocol_->IsAudioChannelOpened() &&
-                    clock_ticks_ - last_channel_attempt_ticks_ >= kChannelReopenIntervalSeconds) {
-                    last_channel_attempt_ticks_ = clock_ticks_;
-                    Schedule([this]() {
-                        if (GetDeviceState() != kDeviceStateIdle || protocol_ == nullptr ||
-                            protocol_->IsAudioChannelOpened()) {
-                            return;
-                        }
-                        if (!protocol_->OpenAudioChannel()) {
-                            ESP_LOGW(TAG, "Idle channel reopen failed; retrying later");
-                        }
-                    });
-                }
-#endif
             } else {
                 // Anything but idle is the device working for the user.
                 NoteUserActivity();
@@ -755,11 +724,7 @@ void Application::InitializeProtocol() {
     // Apollo is configured from NVS, not from an OTA config response. The
     // upstream MQTT/websocket protocols are gone from this fork: Apollo's
     // dialect is the only one the device speaks.
-#ifdef CONFIG_APOLLO_CODEX_VOICE
     protocol_ = std::make_unique<CodexVoiceProtocol>();
-#else
-    protocol_ = std::make_unique<ApolloProtocol>();
-#endif
 
     protocol_->OnConnected([this]() { DismissAlert(); });
 
@@ -769,13 +734,9 @@ void Application::InitializeProtocol() {
     });
 
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
-#ifdef CONFIG_APOLLO_CODEX_VOICE
         // Live audio and captions arrive independently; captions must not gate playback.
         if (protocol_->IsAudioChannelOpened() &&
             (GetDeviceState() == kDeviceStateListening || GetDeviceState() == kDeviceStateSpeaking)) {
-#else
-        if (GetDeviceState() == kDeviceStateSpeaking) {
-#endif
             audio_service_.PushPacketToDecodeQueue(std::move(packet));
         }
     });
@@ -796,9 +757,7 @@ void Application::InitializeProtocol() {
             if (protocol_->IsAudioChannelOpened()) {
                 return;
             }
-#ifdef CONFIG_APOLLO_CODEX_VOICE
             audio_service_.ResetDecoder();
-#endif
             Board::GetInstance().SetPowerSaveLevel(PowerSaveLevel::LOW_POWER);
             DismissConfirm();
             if (GetDeviceState() == kDeviceStateIdle) {
@@ -833,17 +792,6 @@ void Application::InitializeProtocol() {
                     if (GetDeviceState() != kDeviceStateSpeaking) {
                         return;
                     }
-#if defined(CONFIG_APOLLO_PROTOCOL) && !defined(CONFIG_APOLLO_CODEX_VOICE)
-                    // Apollo pushes the whole reply as fast as the link allows,
-                    // so "stop" means "that was the last byte", not "playback is
-                    // over" — a 7 second reply arrives in about one. Leaving
-                    // speaking here would drop the face back to idle mid
-                    // sentence, so wait for the playback queue to drain.
-                    if (!audio_service_.IsPlaybackIdle()) {
-                        pending_speech_stop_ = true;
-                        return;
-                    }
-#endif
                     FinishSpeaking();
                 });
             } else if (strcmp(state->valuestring, "sentence_start") == 0) {
@@ -1043,9 +991,7 @@ void Application::ContinueOpenAudioChannel(ListeningMode mode) {
     if (GetDeviceState() != kDeviceStateConnecting || call_end_requested_.load()) {
         return;
     }
-#ifdef CONFIG_APOLLO_CODEX_VOICE
     Board::GetInstance().GetDisplay()->ShowVoicePage();
-#endif
 
     // Switch to performance mode before connecting to reduce latency
     auto& board = Board::GetInstance();
@@ -1165,12 +1111,10 @@ void Application::SendGesture(const std::string& gesture) {
             return;
         }
 
-#ifdef CONFIG_APOLLO_CODEX_VOICE
         if (gesture == "tap" || gesture == "double_tap") {
             HandleToggleChatEvent();
         }
         return;
-#endif
 
         // Recording is on the press-and-hold; a tap is only ever a way to stop
         // something, so it never reaches the server as a gesture.
@@ -1202,7 +1146,6 @@ void Application::SendGesture(const std::string& gesture) {
     });
 }
 
-#ifdef CONFIG_APOLLO_CODEX_VOICE
 void Application::OnVoiceTouchRelease(int x, int y) {
     Schedule([this, x, y]() {
         const bool was_asleep = is_screen_asleep_;
@@ -1229,7 +1172,6 @@ void Application::OnVoiceTouchRelease(int x, int y) {
         }
     });
 }
-#endif
 
 void Application::ShowConfirm(const std::string& summary, uint32_t timeout_ms) {
     Schedule([this, summary, timeout_ms]() {
@@ -1497,10 +1439,8 @@ void Application::BeginWakeWordInvoke(const std::string& wake_word) {
         audio_service_.EnableWakeWordDetection(true);
         return;
     }
-#ifdef CONFIG_APOLLO_CODEX_VOICE
     call_end_requested_.store(false);
     Board::GetInstance().GetDisplay()->ShowVoicePage();
-#endif
 
     if (!protocol_->IsAudioChannelOpened()) {
         // Schedule to let the state change be processed first (UI update),
@@ -1569,10 +1509,8 @@ void Application::HandleStateChangedEvent() {
     switch (new_state) {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
-#ifdef CONFIG_APOLLO_CODEX_VOICE
             voice_model_picker_open_ = false;
             display->HideVoiceModels();
-#endif
             display->SetStatus(Lang::Strings::STANDBY);
             display->ClearChatMessages();    // Clear messages first
             display->SetEmotion("neutral");  // Then set emotion (wechat mode checks child count)
@@ -1615,9 +1553,6 @@ void Application::HandleStateChangedEvent() {
                 // Only AFE wake word can be detected in speaking mode
                 audio_service_.EnableWakeWordDetection(audio_service_.IsAfeWakeWord());
             }
-#ifndef CONFIG_APOLLO_CODEX_VOICE
-            audio_service_.ResetDecoder();
-#endif
             break;
         case kDeviceStateWifiConfiguring:
             audio_service_.EnableVoiceProcessing(false);
@@ -1856,7 +1791,6 @@ void Application::ResetProtocol() {
     });
 }
 
-#ifdef CONFIG_APOLLO_CODEX_VOICE
 void Application::RefreshWatchInfo() {
     auto& board = Board::GetInstance();
     auto display = dynamic_cast<LcdDisplay*>(board.GetDisplay());
@@ -2036,4 +1970,3 @@ void Application::OnWatchAction(WatchUi::Action action, int value,
         RefreshWatchInfo();
     });
 }
-#endif

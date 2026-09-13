@@ -124,7 +124,6 @@ void AudioService::Initialize(AudioCodec* codec) {
     audio_engine_ = std::make_unique<LiteAudioEngine>();
 #endif
     audio_engine_->OnOutput([this](std::vector<int16_t>&& data) {
-#ifdef CONFIG_APOLLO_CODEX_VOICE
         /* Barge-in measurement: compare what the microphone delivers while the
          * speaker is idle against what it delivers while Apollo is talking. If
          * echo cancellation is scrubbing the user's interruption, raw_peak
@@ -157,7 +156,6 @@ void AudioService::Initialize(AudioCodec* codec) {
                 mic_peak_window = 0;
             }
         }
-#endif
         PushTaskToEncodeQueue(kAudioTaskTypeEncodeToSendQueue, std::move(data));
     });
     audio_engine_->OnVadStateChange([this](bool speaking) {
@@ -366,7 +364,6 @@ void AudioService::AudioInputTask() {
             int samples = 160; // 10ms
             std::vector<int16_t> data;
             if (ReadAudioData(data, 16000, samples)) {
-#ifdef CONFIG_APOLLO_CODEX_VOICE
                 /* Echo-cancellation input check. The codec hands the AFE two
                  * interleaved channels: the microphone, then the loopback of
                  * what the speaker is playing. The canceller subtracts the
@@ -390,7 +387,6 @@ void AudioService::AudioInputTask() {
                         mic_window = reference_window = 0;
                     }
                 }
-#endif
                 audio_engine_->Feed(std::move(data));
                 continue;
             }
@@ -404,11 +400,9 @@ void AudioService::AudioInputTask() {
 }
 
 void AudioService::AudioOutputTask() {
-#ifdef CONFIG_APOLLO_CODEX_VOICE
     uint32_t output_frames = 0;
     int output_peak = 0;
     int64_t last_output_log = 0;
-#endif
     while (true) {
         std::unique_lock<std::mutex> lock(audio_queue_mutex_);
         audio_queue_cv_.wait(lock, [this]() {
@@ -430,11 +424,8 @@ void AudioService::AudioOutputTask() {
             codec_->EnableOutput(true);
         }
 
-#ifdef CONFIG_APOLLO_CODEX_VOICE
         output_voice_level_.store(CodexVoiceLevel(task->pcm));
-#endif
         codec_->OutputData(task->pcm);
-#ifdef CONFIG_APOLLO_CODEX_VOICE
         for (int sample : task->pcm) output_peak = std::max(output_peak, sample < 0 ? -sample : sample);
         ++output_frames;
         {
@@ -453,7 +444,6 @@ void AudioService::AudioOutputTask() {
                      codec_->output_enabled(), IsMicrophoneMuted());
             output_peak = 0;
         }
-#endif
 
         if (task->tts_source_milliseconds > 0) {
             played_tts_milliseconds_ += task->tts_source_milliseconds;
@@ -511,9 +501,7 @@ void AudioService::OpusCodecTask() {
             auto task = std::make_unique<AudioTask>();
             task->type = kAudioTaskTypeDecodeToPlaybackQueue;
             task->timestamp = packet->timestamp;
-#ifdef CONFIG_APOLLO_CODEX_VOICE
             const int64_t decode_started = esp_timer_get_time();
-#endif
 
             SetDecodeSampleRate(packet->sample_rate, packet->frame_duration);
             bool decoded = false;
@@ -571,7 +559,6 @@ void AudioService::OpusCodecTask() {
             }
 
             lock.lock();
-#ifdef CONFIG_APOLLO_CODEX_VOICE
             static uint32_t decoded_frames = 0;
             if (++decoded_frames == 1 || decoded_frames % 250 == 0) {
                 ESP_LOGI(TAG, "[DEBUG-audio] decode_us=%lld duration=%d samples=%u backlog=%u encode_backlog=%u",
@@ -579,7 +566,6 @@ void AudioService::OpusCodecTask() {
                          (unsigned)task->pcm.size(), (unsigned)audio_decode_queue_.size(),
                          (unsigned)audio_encode_queue_.size());
             }
-#endif
             if (decoded && generation == playback_generation_ && !service_stopped_.load()) {
                 audio_playback_queue_.push_back(std::move(task));
             }

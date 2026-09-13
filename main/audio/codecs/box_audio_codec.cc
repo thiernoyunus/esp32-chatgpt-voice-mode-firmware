@@ -254,11 +254,8 @@ int BoxAudioCodec::Read(int16_t* dest, int samples) {
 
 int BoxAudioCodec::Write(const int16_t* data, int samples) {
     if (output_enabled_) {
-#ifdef CONFIG_APOLLO_CODEX_VOICE
         const int64_t started = esp_timer_get_time();
-#endif
         ESP_ERROR_CHECK_WITHOUT_ABORT(esp_codec_dev_write(output_dev_, (void*)data, samples * sizeof(int16_t)));
-#ifdef CONFIG_APOLLO_CODEX_VOICE
         static uint32_t writes = 0;
         if (++writes == 1 || writes % 250 == 0) {
             const int64_t write_us = esp_timer_get_time() - started;
@@ -268,7 +265,6 @@ int BoxAudioCodec::Write(const int16_t* data, int samples) {
             ESP_LOGI(TAG, "[DEBUG-audio] samples=%d write_us=%lld dac_mute=%x dac_volume=%x",
                      samples, (long long)write_us, mute, volume);
         }
-#endif
     }
     return samples;
 }
