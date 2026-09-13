@@ -376,21 +376,6 @@ def _wake_word_sdkconfig_options(
 
 _BOARDS_DIR = Path("main/boards")
 
-_DYNAMIC_CAMERA_MIRROR_BOARD_CONFIGS = {
-    # These boards intentionally change orientation at runtime according to the
-    # detected sensor or persisted device state. A compile-time override would
-    # be misleading because that runtime decision would win afterwards.
-    "CONFIG_BOARD_TYPE_DF_S3_AI_CAM",
-    "CONFIG_BOARD_TYPE_ESP_SPARKBOT",
-    "CONFIG_BOARD_TYPE_M5STACK_ATOM_S3R_CAM_M12_ECHO_BASE",
-    "CONFIG_BOARD_TYPE_SEEED_STUDIO_SENSECAP_WATCHER",
-}
-_OPTIONAL_CAMERA_ENABLE_SYMBOLS = {
-    # ESP-VOCAT only constructs EspVideo when its optional USB UVC transport
-    # is enabled. Do not advertise mirror controls for the camera-less default
-    # build, but expose them automatically for an explicitly enabled variant.
-    "CONFIG_BOARD_TYPE_ESP_VOCAT": "CONFIG_ESP_VIDEO_ENABLE_USB_UVC_VIDEO_DEVICE",
-}
 
 
 def _sdkconfig_assignments(options: list[str]) -> dict[str, str]:
@@ -529,38 +514,6 @@ def _build_option_definitions(
             ],
         })
 
-    # ESP32-P4 obtains networking through a companion chip and cannot enable
-    # the local ESP-BluFi stack selected by this project option.
-    if target != "esp32p4" and ("wifi_board.h" in source or re.search(r"\bWifiBoard\b", source)):
-        definitions.append({
-            "key": "wifi_provisioning",
-            "type": "select",
-            "default": (
-                "blufi"
-                if assignments.get("CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING") == "y"
-                and assignments.get("CONFIG_USE_HOTSPOT_WIFI_PROVISIONING") == "n"
-                else "hotspot"
-            ),
-            "choices": [
-                {"value": "hotspot", "label": "Wi-Fi hotspot"},
-                {"value": "blufi", "label": "ESP-BluFi"},
-            ],
-        })
-
-    camera_enable_symbol = _OPTIONAL_CAMERA_ENABLE_SYMBOLS.get(board_config)
-    has_common_camera = (
-        ("new Esp32Camera" in source or "new EspVideo" in source)
-        and (
-            camera_enable_symbol is None
-            or assignments.get(camera_enable_symbol) == "y"
-        )
-    )
-    if has_common_camera and board_config not in _DYNAMIC_CAMERA_MIRROR_BOARD_CONFIGS:
-        definitions.extend((
-            {"key": "camera_hmirror", "type": "boolean", "default": False},
-            {"key": "camera_vflip", "type": "boolean", "default": False},
-        ))
-
     configured_defaults = build.get("build_options", {})
     if not isinstance(configured_defaults, dict):
         raise ValueError(f"build {build.get('name')!r} build_options must be an object")
@@ -638,19 +591,6 @@ def _build_options_sdkconfig(
         if device:
             result.append("CONFIG_USE_AUDIO_PROCESSOR=y")
 
-    if "wifi_provisioning" in options:
-        blufi = options["wifi_provisioning"] == "blufi"
-        result.extend((
-            f"CONFIG_USE_HOTSPOT_WIFI_PROVISIONING={'n' if blufi else 'y'}",
-            f"CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING={'y' if blufi else 'n'}",
-        ))
-
-    if "camera_hmirror" in options or "camera_vflip" in options:
-        result.extend((
-            "CONFIG_XIAOZHI_CAMERA_MIRROR_CONFIGURED=y",
-            f"CONFIG_XIAOZHI_CAMERA_HMIRROR={'y' if options.get('camera_hmirror') else 'n'}",
-            f"CONFIG_XIAOZHI_CAMERA_VFLIP={'y' if options.get('camera_vflip') else 'n'}",
-        ))
     return result
 
 

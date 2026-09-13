@@ -5,14 +5,6 @@ set(SOURCES "audio/audio_codec.cc"
             "audio/demuxer/ogg_demuxer.cc"
             "audio/codecs/no_audio_codec.cc"
             "audio/codecs/box_audio_codec.cc"
-            "audio/codecs/es8311_audio_codec.cc"
-            "audio/codecs/es8374_audio_codec.cc"
-            "audio/codecs/es8388_audio_codec.cc"
-            "audio/codecs/es8389_audio_codec.cc"
-            "audio/codecs/dummy_audio_codec.cc"
-            "led/single_led.cc"
-            "led/circular_strip.cc"
-            "led/gpio_led.cc"
             "display/display.cc"
             "display/text_glyph.cc"
             "display/lcd_display.cc"
@@ -150,10 +142,6 @@ else()
     list(APPEND SOURCES "audio/wake_words/esp_wake_word.cc")
 endif()
 
-# Auto Select Additional Sources
-if (CONFIG_USE_ESP_BLUFI_WIFI_PROVISIONING)
-    list(APPEND SOURCES "boards/common/blufi.cpp")
-endif ()
 # Select language directory according to Kconfig
 if(CONFIG_LANGUAGE_ES_ES)
     set(LANG_DIR "es-ES")
