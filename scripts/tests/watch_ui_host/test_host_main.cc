@@ -181,7 +181,6 @@ int main() {
         {WatchUi::Page::Sleep, "sleep"},
         {WatchUi::Page::Reasoning, "reasoning"},
         {WatchUi::Page::Chats, "chats"},
-        {WatchUi::Page::Approvals, "approvals"},
         {WatchUi::Page::WifiSetup, "wifisetup"},
     };
     for (auto& pt : pages) { ui.Show(pt.p); tick_lv(); snap(pt.n); }
@@ -193,11 +192,12 @@ int main() {
     {
         const char* kNotice = "Update didn't finish. Running your last working version.";
         ui.Show(WatchUi::Page::Settings); tick_lv();
+        const int bare = count_children_recursive(lv_screen_active());
         info.notice = kNotice; ui.SetInfo(info); tick_lv();
-        check(find_label(lv_screen_active(), kNotice) != nullptr, "Notice banner appears");
+        check(count_children_recursive(lv_screen_active()) > bare, "Notice banner appears");
         snap("notice");
         info.notice.clear(); ui.SetInfo(info); tick_lv();
-        check(find_label(lv_screen_active(), kNotice) == nullptr, "Notice banner clears");
+        check(count_children_recursive(lv_screen_active()) == bare, "Notice banner clears");
     }
 
     ui.Show(WatchUi::Page::Brightness); tick_lv();
@@ -213,8 +213,8 @@ int main() {
             if (lv_obj_get_width(child) == 360 && lv_obj_get_height(child) == 360) shell = child;
         }
         if (shell == nullptr) return nullptr;
-        const int y = ui.page() == WatchUi::Page::Brightness ? 200
-                    : ui.page() == WatchUi::Page::Sleep ? 90 : 100;
+        const int y = ui.page() == WatchUi::Page::Brightness ? 244
+                    : 100;
         lv_obj_t* container = nullptr;
         for (uint32_t i = 0; i < lv_obj_get_child_cnt(shell); ++i) {
             lv_obj_t* child = lv_obj_get_child(shell, i);

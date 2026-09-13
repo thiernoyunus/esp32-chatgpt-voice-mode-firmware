@@ -9,7 +9,7 @@
 class WatchUi {
 public:
     enum class Page { Home, Voice, Settings, Brightness, Volume, Wifi, Clock, About,
-                      CodexSettings, Models, Approvals, Keyboard, WifiSetup, Sleep, Reasoning,
+                      CodexSettings, Models, Keyboard, WifiSetup, Sleep, Reasoning,
                       Chats, Voices, Shapes, Colours };
     enum class Action { Refresh, OpenVoice, Mute, EndCall, Brightness, Volume,
                         ScanWifi, JoinWifi, SetupWifi, Models, SelectModel, Sleep, SelectReasoning,
@@ -71,11 +71,19 @@ private:
     lv_obj_t* Box(lv_obj_t*, int x, int y, int w, int h, uint32_t color, int radius = 16);
     lv_obj_t* Label(lv_obj_t*, const char*, int width = 0);
     lv_obj_t* Button(lv_obj_t*, int x, int y, int w, int h, const char*,
-                     const lv_image_dsc_t*, std::function<void()>, uint32_t color = 0x181F2C);
+                     const lv_image_dsc_t*, std::function<void()>, uint32_t color = 0x1A1A1A);
     void Header(const char*, Page back);
     lv_obj_t* Column();
-    void Row(const char*, const char*, const lv_image_dsc_t*, std::function<void()>);
+    // `selected` marks the row as the current choice: accent rule, filled
+    // background, accent value. It used to be inferred from the value reading
+    // "On", which meant a switch whose value was "On" looked like a chosen
+    // list item, and a picker that passed no value showed no choice at all.
+    void Row(const char*, const char*, std::function<void()>, bool selected = false);
     void Slider(bool brightness);
+    // The dot-matrix drawer paints into a canvas, so a value that changes is
+    // redrawn rather than re-lettered the way an LVGL label would be.
+    void ShowSliderValue(int percent);
+    void DrawClockFace();
     void KeyboardKeys();
     void ChooseNetwork(const std::string&);
     void ShowKeyboardError(const char* text);

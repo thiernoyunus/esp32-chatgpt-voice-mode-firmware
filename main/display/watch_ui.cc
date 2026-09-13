@@ -11,12 +11,21 @@
 #include <utility>
 
 namespace {
-constexpr uint32_t kRaised = 0x181F2C, kAccent = 0x10A37F;
+constexpr uint32_t kAccent = 0x10A37F;
 // The round screen's geometry, shared with the design mockups: centre, and the
 // radius everything drawn has to stay inside of.
 constexpr int kCenter = 180, kSafeR = 176;
 constexpr int kDotNav = 44;    // smallest comfortable touch target here
 constexpr int kDotRowH = 46;   // app-pixels list row
+// The sleep choices, named once. The brightness row used to format its own
+// value ("60 s") while this page said "1 minute" for the same setting.
+struct SleepOpt { int seconds; const char* label; };
+constexpr SleepOpt kSleepOpts[]={{0,"Always on"},{30,"30 seconds"},{60,"1 minute"},
+                                 {120,"2 minutes"},{300,"5 minutes"}};
+const char* SleepLabel(int seconds){
+    for(const auto& o:kSleepOpts) if(o.seconds==seconds) return o.label;
+    return "Custom";
+}
 constexpr const char* kShapeNames[]={"Circle","Pebble","Squircle","Capsule","Triangle","Hexagon","Cloud","Droplet"};
 static_assert(sizeof(kShapeNames)/sizeof(kShapeNames[0])==voice_character::kShapeCount,
               "a silhouette has no name, or a name has no silhouette");
@@ -89,6 +98,15 @@ void Click(lv_obj_t* obj, std::function<void()> fn) {
         }
     }, LV_EVENT_ALL, owned);
 }
+// Shorten text until it fits `room` pixels, marking the cut with a dot. The
+// dot-matrix drawer has no truncation of its own, so without this long names
+// run off the side of the row and out of the circle.
+std::string Fit(const char* text, const dm_style_t* st, int room) {
+    std::string s(text);
+    if (dm_width(s.c_str(), st) <= room) return s;
+    while (!s.empty() && dm_width((s + ".").c_str(), st) > room) s.pop_back();
+    return s.empty() ? s : s + ".";
+}
 bool IsPrintableAscii(char c) { return c >= 0x20 && c <= 0x7E; }
 bool IsHex(char c) {
     return (c >= '0' && c <= '9') || (c >= 'a' && c <= 'f') || (c >= 'A' && c <= 'F');
@@ -136,7 +154,7 @@ lv_obj_t* WatchUi::Button(lv_obj_t* p, int x, int y, int w, int h, const char* t
     lv_obj_remove_flag(b, LV_OBJ_FLAG_CLICKABLE);
     if (fn) {
         lv_obj_add_flag(b, LV_OBJ_FLAG_CLICKABLE);
-        lv_obj_set_style_bg_color(b, lv_color_hex(0x344052), LV_STATE_PRESSED);
+        lv_obj_set_style_bg_color(b, lv_color_hex(0x2E2E2E), LV_STATE_PRESSED);
     }
     if (icon) Icon(b,icon);
     else { auto l=Label(b,text,w-8); lv_obj_set_style_text_align(l,LV_TEXT_ALIGN_CENTER,0); lv_obj_center(l); }
@@ -144,22 +162,25 @@ lv_obj_t* WatchUi::Button(lv_obj_t* p, int x, int y, int w, int h, const char* t
 }
 void WatchUi::Header(const char* title, Page back) {
     if(dot_style_){
-        // Back arrow and title on ONE line, centred as a pair - the way the
-        // device's own ChatGPT sheet already lays it out, and why the arrow
-        // left the corner. The title steps down one dot size when the pair
-        // cannot clear the circle: the button is a fixed 44px touch target and
-        // must not shrink.
-        dm_style_t st={4,3,1,kAccent,0x101010};
+        // Back arrow and title on ONE line. ONE size on every page: the old
+        // shrink-to-fit stepped both pitch and dot, so a long title came out
+        // smaller AND fainter than a short one - "BRIGHTNESS" and "VOLUME" are
+        // sibling pages and looked nothing alike.
+        //
+        // The pair is left-aligned to the list's own left edge rather than
+        // centred. Centring is what the mockup does, but its titles are five
+        // or six characters; ours run to ten, and only the full chord holds
+        // "BRIGHTNESS" at a readable size. It also lines the heading up with
+        // the rows underneath it.
+        dm_style_t st={3,2,1,kAccent,0x101010};
         const int cy=70;
-        const int half=ChordHalf(cy-kDotNav/2)-10;
-        int w=dm_width(title,&st);
-        // Step the title down a dot size until the pair clears the circle. The
-        // button is a fixed 44px touch target and must not shrink, so a title
-        // too long for one line pays for it in size instead.
-        while(st.pitch>2&&kDotNav+12+w>2*half){st.pitch--;st.dot--;w=dm_width(title,&st);}
-        const int x0=kCenter-(kDotNav+12+w)/2;
+        const int x0=66;
+        const int title_x=x0+kDotNav+10;
+        // Right limit measured at the title's TOP edge, the corner furthest
+        // from centre and so the first to leave the circle.
+        const int room=(kCenter+ChordHalf(cy-DM_H*st.pitch/2))-8-title_x;
         Button(shell_,x0,cy-kDotNav/2,kDotNav,kDotNav,"",&watch_icons::back,[this,back]{Show(back);},0x1A1A1A);
-        dm_text(shell_,x0+kDotNav+12,cy-DM_H*st.pitch/2,title,&st);
+        dm_text(shell_,title_x,cy-DM_H*st.pitch/2,Fit(title,&st,room).c_str(),&st);
         Box(shell_,84,cy+26,192,1,0x2A2A33,0);   // hairline, not a filled bar
         return;
     }
@@ -167,6 +188,8 @@ void WatchUi::Header(const char* title, Page back) {
     auto l=Label(shell_,title,154);lv_obj_set_pos(l,116,49);
 }
 lv_obj_t* WatchUi::Column() {
+    // UpdateNotice() shortens this when a banner is up; it runs at the end of
+    // every Show(), so the height is decided in one place only.
     auto c=Box(shell_,62,dot_style_?100:90,236,dot_style_?212:220,0,0);
     lv_obj_set_style_bg_opa(c,LV_OPA_TRANSP,0);
     lv_obj_add_flag(c,LV_OBJ_FLAG_SCROLLABLE);
@@ -178,58 +201,41 @@ lv_obj_t* WatchUi::Column() {
 }
 // Row is read-only when `fn` is empty: no chevron, no navigation behavior.
 // The bool is captured before std::move so the chevron stays consistent.
-void WatchUi::Row(const char* title,const char* value,const lv_image_dsc_t* icon,std::function<void()> fn) {
-    if(dot_style_){
-        // Plain row: name left, value right on the SAME line, no icon chip and
-        // no chevron. Only the current row is filled, and it carries a 3px
-        // accent rule on the left - which is what makes the list scannable with
-        // no other chrome at all. A page marks its current row by passing "On"
-        // as that row's value.
-        const bool current=value!=nullptr&&strcmp(value,"On")==0;
-        auto r=Box(column_,0,0,236,kDotRowH,current?0x141414:0x000000,2);
-        lv_obj_set_style_bg_opa(r,current?LV_OPA_COVER:LV_OPA_TRANSP,0);
-        if(current){auto s=Box(r,0,0,3,kDotRowH,kAccent,0);lv_obj_remove_flag(s,LV_OBJ_FLAG_CLICKABLE);}
-        if(fn) Click(r,std::move(fn));
-        dm_style_t n={3,2,1,current?0xFFFFFFu:0x8E8E93u,0x101010u};
-        dm_style_t v={3,2,1,current?kAccent:0x5A5A5Fu,0x101010u};
-        const bool has_value=value!=nullptr&&value[0]!=0;
-        // The row has to hold a name and a value on ONE line, and nine
-        // characters of name at pitch 3 leaves no room for one. Both step down
-        // to pitch 2 together - the same trade the header makes with its title.
-        if(has_value&&14+dm_width(title,&n)+16+dm_width(value,&v)>236-12){
-            n.pitch=2;n.dot=1;v.pitch=2;v.dot=1;
-        }
-        dm_text(r,14,(kDotRowH-DM_H*n.pitch)/2,title,&n);
-        if(has_value){
-            const int vw=dm_width(value,&v);
-            // Anything that still cannot fit beside its name is dropped rather
-            // than written over it - a long chat title, usually.
-            if(14+dm_width(title,&n)+16+vw<=236-12)
-                dm_text(r,236-12-vw,(kDotRowH-DM_H*v.pitch)/2,value,&v);
-        }
-       return;
-    }
-   const bool navigable = static_cast<bool>(fn);
-    auto r=Button(column_,0,0,236,62,"",nullptr,std::move(fn));
-    lv_obj_clean(r);
-    if(icon){auto chip=Box(r,10,15,32,32,0x232C3A,16);Icon(chip,icon);lv_obj_remove_flag(chip,LV_OBJ_FLAG_CLICKABLE);}
-    const int left=icon?52:14;
-    auto l=Label(r,title,210-left);lv_obj_set_pos(l,left,value?8:21);
-    if(value){auto v=Label(r,value,210-left);lv_obj_set_style_text_color(v,lv_color_hex(0xAEB6C4),0);lv_obj_set_pos(v,left,34);}
-    if(navigable){
-        auto chevron=Label(r,">",12);
-        lv_obj_set_pos(chevron,216,22);
-        lv_obj_remove_flag(chevron,LV_OBJ_FLAG_CLICKABLE);
-    }
+void WatchUi::Row(const char* title,const char* value,std::function<void()> fn,bool selected) {
+    // Plain row: name left, value right on the SAME line, no icon chip and
+    // no chevron. The current row is filled and carries a 3px accent rule
+    // on the left, which is what makes the list scannable with no other
+    // chrome at all.
+    //
+    // ONE text size for every row on every page. The old rule sized each
+    // row on its own - shrinking when a name and value would not fit - so
+    // a four-row list could show three different sizes. A value that does
+    // not fit is no longer thrown away either: the value is the state of
+    // the row, so it is drawn first and the NAME gives up the space.
+    auto r=Box(column_,0,0,236,kDotRowH,selected?0x141414:0x000000,2);
+    lv_obj_set_style_bg_opa(r,selected?LV_OPA_COVER:LV_OPA_TRANSP,0);
+    if(selected){auto s=Box(r,0,0,3,kDotRowH,kAccent,0);lv_obj_remove_flag(s,LV_OBJ_FLAG_CLICKABLE);}
+    if(fn) Click(r,std::move(fn));
+    constexpr int kPadL=14,kPadR=12,kGap=16;
+    dm_style_t n={2,1,1,selected?0xFFFFFFu:0x8E8E93u,0x101010u};
+    dm_style_t v={2,1,1,selected?kAccent:0x5A5A5Fu,0x101010u};
+    const bool has_value=value!=nullptr&&value[0]!=0;
+    // A value gets at most half the row; past that it is the name that
+    // carries the meaning, so the value is the one cut.
+    const std::string shown=has_value?Fit(value,&v,(236-kPadL-kPadR-kGap)/2):std::string();
+    const int vw=shown.empty()?0:dm_width(shown.c_str(),&v);
+    const int name_room=236-kPadL-kPadR-(vw?vw+kGap:0);
+    dm_text(r,kPadL,(kDotRowH-DM_H*n.pitch)/2,Fit(title,&n,name_room).c_str(),&n);
+    if(vw) dm_text(r,236-kPadR-vw,(kDotRowH-DM_H*v.pitch)/2,shown.c_str(),&v);
 }
 void WatchUi::Show(Page page) {
     page_=page;
-    // Every page wears the app-pixels language except the three that are not
-    // lists: Home keeps its icon tiles by request, the call screen is the
-    // character, and the keyboard and Wi-Fi setup bring their own layout.
+    // Every page wears the app-pixels language except three: Home keeps its
+    // icon tiles by request, the call screen is the character, and the keyboard
+    // keeps a real typeface because the dot-matrix drawer folds lowercase to
+    // uppercase - wrong on a key cap, dangerous in a password field.
     switch(page){
-    case Page::Home: case Page::Voice: case Page::Keyboard: case Page::WifiSetup:
-    case Page::Sleep:
+    case Page::Home: case Page::Voice: case Page::Keyboard:
         dot_style_=false;break;
     default: dot_style_=true;break;
     }
@@ -262,46 +268,19 @@ void WatchUi::Show(Page page) {
     }
     case Page::Settings:
         Header("Settings",Page::Home);Column();
-        Row("Wi-Fi",info_.network.empty()?"Not connected":info_.network.c_str(),&watch_icons::wifi,[this]{Show(Page::Wifi);Emit(Action::ScanWifi);});
-        Row("Brightness",nullptr,&watch_icons::sun,[this]{Show(Page::Brightness);});
-        Row("Volume",nullptr,&watch_icons::volume,[this]{Show(Page::Volume);});
-        Row("About",info_.version.c_str(),&watch_icons::info,[this]{Show(Page::About);});break;
+        Row("Wi-Fi",info_.network.empty()?"Not connected":info_.network.c_str(),[this]{Show(Page::Wifi);Emit(Action::ScanWifi);});
+        Row("Brightness",nullptr,[this]{Show(Page::Brightness);});
+        Row("Volume",nullptr,[this]{Show(Page::Volume);});
+        Row("About",info_.version.c_str(),[this]{Show(Page::About);});break;
     case Page::Brightness: {
         Header("Brightness",Page::Settings);
-        const int initial=info_.brightness;
-        value_=Label(shell_,(std::to_string(initial)+"%").c_str());
-        lv_obj_align(value_,LV_ALIGN_TOP_MID,0,100);
-        auto slider=lv_slider_create(shell_);
-        lv_obj_set_size(slider,216,18);
-        lv_obj_align(slider,LV_ALIGN_TOP_MID,0,140);
-        lv_obj_set_ext_click_area(slider,18);
-        lv_slider_set_range(slider,5,100);
-        lv_slider_set_value(slider,initial,LV_ANIM_OFF);
-        lv_obj_set_style_bg_color(slider,lv_color_hex(kAccent),LV_PART_INDICATOR);
-        lv_obj_add_event_cb(slider,[](lv_event_t* e){
-            auto self=static_cast<WatchUi*>(lv_event_get_user_data(e));
-            int value=lv_slider_get_value(static_cast<lv_obj_t*>(lv_event_get_target(e)));
-            lv_label_set_text(self->value_,(std::to_string(value)+"%").c_str());
-            if(lv_event_get_code(e)==LV_EVENT_RELEASED){
-                self->info_.brightness=value;
-                self->Emit(Action::Brightness,value);
-            }
-        },LV_EVENT_VALUE_CHANGED,this);
-        lv_obj_add_event_cb(slider,[](lv_event_t* e){
-            auto self=static_cast<WatchUi*>(lv_event_get_user_data(e));
-            int v=lv_slider_get_value(static_cast<lv_obj_t*>(lv_event_get_target(e)));
-            self->info_.brightness=v;
-            self->Emit(Action::Brightness,v);
-        },LV_EVENT_RELEASED,this);
-        // Sleep timeout row sits inside the chord-safe band below the slider
-        // (y=200..262) so it doesn't overlap Cancel-style chrome.
-        // sleep_value is a std::string local; its .c_str() outlives the call.
-        const std::string sleep_value = info_.sleep_seconds == 0
-            ? std::string("Always on")
-            : std::to_string(info_.sleep_seconds) + " s";
-        column_ = Box(shell_, 62, 200, 236, 62, 0, 0);
+        Slider(true);
+        // Sleep sits under the slider, inside the chord-safe band.
+        column_ = Box(shell_, 62, 244, 236, kDotRowH, 0, 0);
         lv_obj_set_style_bg_opa(column_, LV_OPA_TRANSP, 0);
-        Row("Sleep timeout", sleep_value.c_str(), &watch_icons::clock,
+        // "Sleep", not "Sleep timeout": the long name left no room for the
+        // value beside it, and the value was silently dropped.
+        Row("Sleep", SleepLabel(info_.sleep_seconds),
             [this]{ Show(Page::Sleep); });
         break;
     }
@@ -311,75 +290,78 @@ void WatchUi::Show(Page page) {
         wifi_status_=Label(column_,info_.wifi_status.empty()?(info_.network.empty()?"Not connected":info_.network.c_str()):info_.wifi_status.c_str(),236);
         for(const auto& ssid:info_.networks){
             const bool saved=std::find(info_.saved_networks.begin(),info_.saved_networks.end(),ssid)!=info_.saved_networks.end();
-            Row(ssid.c_str(),ssid==info_.network?"Connected":saved?"Saved":"Join network",&watch_icons::wifi,[this,ssid]{ChooseNetwork(ssid);});
+            const bool connected=ssid==info_.network;
+            Row(ssid.c_str(),connected?nullptr:saved?"Saved":"Join",
+                [this,ssid]{ChooseNetwork(ssid);},connected);
         }
-        Row("Other network", "Enter Wi-Fi name",&watch_icons::wifi,[this]{
+        Row("Other network", nullptr,[this]{
             OpenKeyboard(FieldKind::Ssid,"Wi-Fi name","",[this](const std::string& name){ ChooseNetwork(name); });
         });
-        Row("Scan again",nullptr,&watch_icons::wifi,[this]{Emit(Action::ScanWifi);});
-        Row("Phone setup",nullptr,&watch_icons::more,[this]{Show(Page::WifiSetup);});break;
+        Row("Scan again",nullptr,[this]{Emit(Action::ScanWifi);});
+        Row("Set up by phone",nullptr,[this]{Show(Page::WifiSetup);});break;
     case Page::WifiSetup: {
-        Header("Phone setup",Page::Wifi);
-        auto l=Label(shell_,"This ends the voice call.\nJoin the Apollo hotspot\non your phone, then open\n192.168.4.1",230);
-        lv_label_set_long_mode(l,LV_LABEL_LONG_WRAP);lv_obj_set_style_text_align(l,LV_TEXT_ALIGN_CENTER,0);lv_obj_set_pos(l,65,112);
-        Button(shell_,90,244,180,52,"Start setup",nullptr,[this]{Emit(Action::SetupWifi);},kAccent);break;
+        Header("Setup",Page::Wifi);
+        // Shorter lines than the old paragraph: the dot-matrix letters are
+        // wide, and the chord at this height will not hold a full sentence.
+        dm_style_t body={2,1,1,0x8E8E93u,0x101010u};
+        const char* lines[]={"THIS ENDS THE CALL","JOIN THE APOLLO","HOTSPOT, THEN OPEN"};
+        for(int i=0;i<3;++i) dm_text_center(shell_,kCenter,122+i*22,lines[i],&body);
+        dm_style_t addr={3,2,1,0xFFFFFFu,0x101010u};
+        dm_text_center(shell_,kCenter,196,"192.168.4.1",&addr);
+        auto b=Box(shell_,90,250,180,48,0x000000,24);
+        lv_obj_set_style_border_width(b,2,0);
+        lv_obj_set_style_border_color(b,lv_color_hex(kAccent),0);
+        lv_obj_add_flag(b,LV_OBJ_FLAG_CLICKABLE);
+        lv_obj_set_style_bg_color(b,lv_color_hex(0x0E2B22),LV_STATE_PRESSED);
+        dm_style_t cap={2,1,1,kAccent,0x101010};
+        dm_text_center(b,90,(48-DM_H*2)/2,"START SETUP",&cap);
+        Click(b,[this]{Emit(Action::SetupWifi);});
+        break;
     }
     case Page::Sleep: {
-        Header("Sleep timeout", Page::Brightness); Column();
-        struct Opt { int seconds; const char* label; };
-        const Opt opts[] = {
-            {0,   "Always on"},
-            {30,  "30 seconds"},
-            {60,  "1 minute"},
-            {120, "2 minutes"},
-            {300, "5 minutes"},
-        };
-        for (const auto& opt : opts) {
-            const bool current = info_.sleep_seconds == opt.seconds;
+        Header("Sleep", Page::Brightness); Column();
+        for (const auto& opt : kSleepOpts) {
             // No chevron: tapping the row is the affordance; a > would imply
             // a sub-page that does not exist.
-            const char* value_text = current ? "On" : nullptr;
-            Row(opt.label, value_text, nullptr, [this, opt] {
+            Row(opt.label,nullptr, [this, opt] {
                 info_.sleep_seconds = opt.seconds;
                 Emit(Action::Sleep, opt.seconds);
                 Show(Page::Brightness);
-            });
-            if (current) {
-                auto top = lv_obj_get_child(column_, lv_obj_get_child_cnt(column_) - 1);
-                lv_obj_set_style_bg_color(top, lv_color_hex(0x232C3A), 0);
-            }
+            }, info_.sleep_seconds == opt.seconds);
         }
         break;
     }
     case Page::Clock: {
-        Header("Clock",Page::Home);clock_=Label(shell_,time_.c_str());lv_obj_set_style_transform_scale(clock_,384,0);lv_obj_align(clock_,LV_ALIGN_CENTER,0,-20);
-        date_=Label(shell_,date_text_.c_str(),220);lv_obj_set_style_text_align(date_,LV_TEXT_ALIGN_CENTER,0);lv_obj_align(date_,LV_ALIGN_CENTER,0,36);
-        auto l=Label(shell_,info_.connected?"Wi-Fi connected":"Waiting for Wi-Fi",220);lv_obj_set_style_text_align(l,LV_TEXT_ALIGN_CENTER,0);lv_obj_align(l,LV_ALIGN_CENTER,0,80);break;
+        Header("Clock",Page::Home);
+        DrawClockFace();
+        dm_style_t st={2,1,1,0x5A5A5Fu,0x101010u};
+        dm_text_center(shell_,kCenter,258,info_.connected?"WI-FI CONNECTED":"WAITING FOR WI-FI",&st);
+        break;
     }
     case Page::About:{
-        Header("About Apollo",Page::Settings);Column();
-        Row("Firmware",info_.version.c_str(),&watch_icons::info,{});
-        // Row drops a value too wide to fit, so these stay short - the
-        // sentence is the notice card's job. "A"/"B" because ota_0 means
-        // nothing to the wearer, and the font has no underscore anyway.
+        Header("About",Page::Settings);Column();
+        Row("Firmware",info_.version.c_str(),{});
+        // Short labels because a row holds 16 characters between name and
+        // value; the sentence is the notice card's job. "A"/"B" because ota_0
+        // means nothing to the wearer, and the font has no underscore anyway.
         if(info_.rolled_back)
-            Row("Update","Failed",&watch_icons::info,{});
+            Row("Update","Failed",{});
         else if(!info_.slot.empty())
-            Row("Slot",info_.slot=="ota_1"?"B":"A",&watch_icons::info,{});
-        Row("Voice","Codex Voice / WebRTC",&watch_icons::mic,{});
+            Row("Slot",info_.slot=="ota_1"?"B":"A",{});
+        Row("Voice","WebRTC",{});
         std::string battery=info_.battery<0?"Not available":std::to_string(info_.battery)+"%"+(info_.charging?" - charging":"");
-        Row("Battery",battery.c_str(),&watch_icons::info,{});
-        Row("Display","360 x 360",&watch_icons::sun,{});break;
+        Row("Battery",battery.c_str(),{});
+        Row("Display","360x360",{});break;
     }
     case Page::CodexSettings:
         Header("ChatGPT",Page::Voice);Column();
-        Row("Shape",kShapeNames[std::clamp(info_.shape,0,voice_character::kShapeCount-1)],nullptr,[this]{Show(Page::Shapes);});
-        Row("Colour",kColourNames[std::clamp(info_.colour,0,voice_character::kColorCount-1)],nullptr,[this]{Show(Page::Colours);});
-        Row("Voice",info_.voice.empty()?"Default":info_.voice.c_str(),&watch_icons::mic,[this]{Show(Page::Voices);});
-        Row("Model",info_.model.c_str(),&watch_icons::more,[this]{model_return_=Page::CodexSettings;Show(Page::Models);Emit(Action::Models);});
-        Row("Chat",info_.temporary_chat?"Temporary":info_.chat.c_str(),&watch_icons::more,[this]{Show(Page::Chats);Emit(Action::Models);});
-        Row("Reasoning",info_.reasoning.c_str(),&watch_icons::more,[this]{Show(Page::Reasoning);});
-        Row("Captions",info_.captions?"On":"Off",nullptr,[this]{
+        Row("Shape",kShapeNames[std::clamp(info_.shape,0,voice_character::kShapeCount-1)],[this]{Show(Page::Shapes);});
+        Row("Colour",kColourNames[std::clamp(info_.colour,0,voice_character::kColorCount-1)],[this]{Show(Page::Colours);});
+        Row("Voice",info_.voice.empty()?"Default":info_.voice.c_str(),[this]{Show(Page::Voices);});
+        Row("Model",info_.model.c_str(),[this]{model_return_=Page::CodexSettings;Show(Page::Models);Emit(Action::Models);});
+        Row("Chat",info_.temporary_chat?"Temporary":info_.chat.c_str(),[this]{Show(Page::Chats);Emit(Action::Models);});
+        Row("Reasoning",info_.reasoning.c_str(),[this]{Show(Page::Reasoning);});
+        Row("Captions",info_.captions?"On":"Off",[this]{
             info_.captions=!info_.captions;
             Emit(Action::Captions,info_.captions?1:0);
             Show(Page::CodexSettings);
@@ -391,9 +373,9 @@ void WatchUi::Show(Page page) {
         // is short enough to see, and the number was just sitting in space.
         lv_obj_set_height(column_,208);
         for(int i=0;i<voice_character::kShapeCount;++i){
-            Row(kShapeNames[i],info_.shape==i?"On":nullptr,nullptr,[this,i]{
+            Row(kShapeNames[i],nullptr,[this,i]{
                 info_.shape=i; Emit(Action::SelectShape,i); Show(Page::Shapes);
-            });
+            },info_.shape==i);
             auto row=lv_obj_get_child(column_,lv_obj_get_child_cnt(column_)-1);
             lv_obj_set_height(row,52);   /* fill the page rather than 46 of it */
             // Row() creates the title canvas immediately after the optional
@@ -437,22 +419,18 @@ void WatchUi::Show(Page page) {
                               "Vale","Breeze","Arbor","Sol"};
         for(const auto& voice:voices){
             const bool current=info_.voice.empty()?strcmp(voice,"Default")==0:info_.voice==voice;
-            Row(voice,current?"On":nullptr,nullptr,[this,voice]{
+            Row(voice,nullptr,[this,voice]{
                 info_.voice=strcmp(voice,"Default")==0?std::string():voice;
                 Emit(Action::SelectVoice,0,info_.voice);
                 Show(Page::CodexSettings);
-            });
-            if(current){
-                auto top=lv_obj_get_child(column_,lv_obj_get_child_cnt(column_)-1);
-                lv_obj_set_style_bg_color(top,lv_color_hex(0x232C3A),0);
-            }
+            },current);
         }
         break;
     }
     case Page::Chats: {
         Header("Chat",Page::CodexSettings);Column();
         // Temporary chats stay out of Codex, so the picker is pointless then.
-        Row("Temporary chat",info_.temporary_chat?"On":"Off",nullptr,[this]{
+        Row("Temporary",info_.temporary_chat?"On":"Off",[this]{
             info_.temporary_chat=!info_.temporary_chat;
             Emit(Action::TemporaryChat,info_.temporary_chat?1:0);
             Show(Page::Chats);
@@ -462,48 +440,39 @@ void WatchUi::Show(Page page) {
             lv_label_set_long_mode(l,LV_LABEL_LONG_WRAP);
             break;
         }
-        Row("New chat",info_.chat=="New chat"?"On":nullptr,nullptr,[this]{
+        Row("New chat",nullptr,[this]{
             Emit(Action::SelectChat,0);Show(Page::CodexSettings);
-        });
+        },info_.chat=="New chat");
         if(info_.chats.empty()){
             auto l=Label(column_,"Open a voice call to load\nyour recent chats.",236);
             lv_label_set_long_mode(l,LV_LABEL_LONG_WRAP);
         }
         for(size_t i=0;i<info_.chats.size();++i){
             const bool current=info_.chat==info_.chats[i];
-            Row(info_.chats[i].c_str(),current?"On":nullptr,nullptr,[this,i]{
+            Row(info_.chats[i].c_str(),nullptr,[this,i]{
                 Emit(Action::SelectChat,static_cast<int>(i+1));Show(Page::CodexSettings);
-            });
-            if(current){
-                auto top=lv_obj_get_child(column_,lv_obj_get_child_cnt(column_)-1);
-                lv_obj_set_style_bg_color(top,lv_color_hex(0x232C3A),0);
-            }
+            },current);
         }
         break;
     }
     case Page::Models:
         Header("Model",model_return_);Column();
         if(info_.models.size()<=1) {auto l=Label(column_,"Open a voice call to load\nyour available models.",236);lv_label_set_long_mode(l,LV_LABEL_LONG_WRAP);}
-        for(size_t i=0;i<info_.models.size();++i){Row(info_.models[i].c_str(),nullptr,nullptr,[this,i]{Emit(Action::SelectModel,static_cast<int>(i));Show(model_return_);});}break;
-    case Page::Approvals: {
-        Header("Approvals",Page::CodexSettings);
-        auto l=Label(shell_,"Approval requests appear\non this screen.\n\nYour approval policy is\nmanaged in Codex.",230);
-        lv_label_set_long_mode(l,LV_LABEL_LONG_WRAP);lv_obj_set_style_text_align(l,LV_TEXT_ALIGN_CENTER,0);lv_obj_set_pos(l,65,110);break;
-    }
+        for(size_t i=0;i<info_.models.size();++i){
+            Row(info_.models[i].c_str(),nullptr,
+                [this,i]{Emit(Action::SelectModel,static_cast<int>(i));Show(model_return_);},
+                info_.model==info_.models[i]);
+        }break;
     case Page::Reasoning: {
         Header("Reasoning",Page::CodexSettings);Column();
         const char* levels[]={"Low","Medium","High","XHigh","Max","Ultra"};
         for(const auto& level:levels){
             const bool current=info_.reasoning==level;
-            Row(level,current?"On":nullptr,nullptr,[this,level]{
+            Row(level,nullptr,[this,level]{
                 info_.reasoning=level;
                 Emit(Action::SelectReasoning,0,level);
                 Show(Page::CodexSettings);
-            });
-            if(current){
-                auto top=lv_obj_get_child(column_,lv_obj_get_child_cnt(column_)-1);
-                lv_obj_set_style_bg_color(top,lv_color_hex(0x232C3A),0);
-            }
+            },current);
         }
         break;
     }
@@ -513,29 +482,66 @@ void WatchUi::Show(Page page) {
 }
 void WatchUi::UpdateNotice() {
     if (notice_) { lv_obj_delete(notice_); notice_ = nullptr; }
+    // A notice can arrive long after the page was built, so the list is
+    // resized here too - not only when Column() first lays it out.
+    if (column_ != nullptr && dot_style_ && lv_obj_get_y(column_) == 100)
+        lv_obj_set_height(column_, info_.notice.empty() ? 212 : 150);
     if (!info_.notice.empty() && page_ != Page::Voice) {
-        notice_ = Box(shell_, 48, 148, 264, 64, 0x344052, 16);
-        auto notice_label = Label(notice_, info_.notice.c_str(), 248);
-        lv_label_set_long_mode(notice_label, LV_LABEL_LONG_WRAP);
-        lv_obj_set_style_text_align(notice_label, LV_TEXT_ALIGN_CENTER, 0);
-        lv_obj_center(notice_label);
+        // It used to be a navy pill in the old typeface, dropped in the middle
+        // of the screen where it covered a row of whatever list was open. Now
+        // it is a strip along the bottom, in the page's own language.
+        dm_style_t st={2,1,1,0xF5A524u,0x101010u};
+        const int max_w = 248, room = max_w - 16;
+        std::string first = info_.notice, second;
+        if (dm_width(first.c_str(), &st) > room) {
+            // Break at the last space that fits. A banner cut mid-word loses
+            // the half that says what to do about it.
+            size_t cut = first.size();
+            while (cut > 0 && dm_width(first.substr(0, cut).c_str(), &st) > room) --cut;
+            const size_t space = first.rfind(' ', cut);
+            if (space != std::string::npos && space > 0) cut = space;
+            second = first.substr(cut);
+            while (!second.empty() && second.front() == ' ') second.erase(second.begin());
+            first = first.substr(0, cut);
+            second = Fit(second.c_str(), &st, room);
+        }
+        const int line_h = DM_H * st.pitch;
+        const int box_h = second.empty() ? line_h + 14 : line_h * 2 + 18;
+        const int box_w = std::min(max_w,
+            std::max(dm_width(first.c_str(), &st), dm_width(second.c_str(), &st)) + 16);
+        notice_ = Box(shell_, kCenter - box_w / 2, 306 - box_h, box_w, box_h, 0x000000, 6);
+        lv_obj_set_style_border_width(notice_, 1, 0);
+        lv_obj_set_style_border_color(notice_, lv_color_hex(0x5A3F10), 0);
+        dm_text_center(notice_, box_w / 2, 7, first.c_str(), &st);
+        if (!second.empty()) dm_text_center(notice_, box_w / 2, 11 + line_h, second.c_str(), &st);
     }
 }
+void WatchUi::ShowSliderValue(int percent) {
+    if (value_ != nullptr) lv_obj_delete(value_);
+    dm_style_t st = {4, 3, 1, 0xFFFFFFu, 0x101010u};
+    value_ = dm_text_center(shell_, kCenter, 128, (std::to_string(percent) + "%").c_str(), &st);
+}
+// Brightness used to carry its own copy of this, 40px higher up the screen and
+// without the hint line, so two sibling pages never matched. One slider now.
 void WatchUi::Slider(bool brightness) {
     const int initial=brightness?info_.brightness:info_.volume;
-    value_=Label(shell_,(std::to_string(initial)+"%").c_str());lv_obj_align(value_,LV_ALIGN_CENTER,0,-45);
-    auto slider=lv_slider_create(shell_);lv_obj_set_size(slider,216,18);lv_obj_set_pos(slider,72,180);
-    lv_obj_set_ext_click_area(slider,18);lv_slider_set_range(slider,brightness?5:0,100);lv_slider_set_value(slider,initial,LV_ANIM_OFF);
+    ShowSliderValue(initial);
+    auto slider=lv_slider_create(shell_);lv_obj_set_size(slider,216,14);lv_obj_set_pos(slider,72,186);
+    lv_obj_set_ext_click_area(slider,20);lv_slider_set_range(slider,brightness?5:0,100);
+    lv_slider_set_value(slider,initial,LV_ANIM_OFF);
+    // The stock slider is a blue knob on a teal bar on a navy track - three
+    // colours, none of them ours. Dark trough, one accent fill, white knob.
+    lv_obj_set_style_bg_color(slider,lv_color_hex(0x1A1A1A),LV_PART_MAIN);
+    lv_obj_set_style_bg_opa(slider,LV_OPA_COVER,LV_PART_MAIN);
+    lv_obj_set_style_radius(slider,7,LV_PART_MAIN);
     lv_obj_set_style_bg_color(slider,lv_color_hex(kAccent),LV_PART_INDICATOR);
+    lv_obj_set_style_radius(slider,7,LV_PART_INDICATOR);
+    lv_obj_set_style_bg_color(slider,lv_color_white(),LV_PART_KNOB);
+    lv_obj_set_style_pad_all(slider,5,LV_PART_KNOB);
     lv_obj_add_event_cb(slider,[](lv_event_t* e){
         auto self=static_cast<WatchUi*>(lv_event_get_user_data(e));
         int value=lv_slider_get_value(static_cast<lv_obj_t*>(lv_event_get_target(e)));
-        lv_label_set_text(self->value_,(std::to_string(value)+"%").c_str());
-        if(lv_event_get_code(e)==LV_EVENT_RELEASED){
-            bool brightness=self->page_==Page::Brightness;
-            (brightness?self->info_.brightness:self->info_.volume)=value;
-            self->Emit(brightness?Action::Brightness:Action::Volume,value);
-        }
+        self->ShowSliderValue(value);
     },LV_EVENT_VALUE_CHANGED,this);
     lv_obj_add_event_cb(slider,[](lv_event_t* e){
         auto self=static_cast<WatchUi*>(lv_event_get_user_data(e));
@@ -543,7 +549,16 @@ void WatchUi::Slider(bool brightness) {
         bool b=self->page_==Page::Brightness;(b?self->info_.brightness:self->info_.volume)=v;
         self->Emit(b?Action::Brightness:Action::Volume,v);
     },LV_EVENT_RELEASED,this);
-    auto hint=Label(shell_,"Saved when you lift your finger",230);lv_obj_set_style_text_align(hint,LV_TEXT_ALIGN_CENTER,0);lv_obj_set_pos(hint,65,232);
+    dm_style_t hint={2,1,1,0x5A5A5Fu,0x101010u};
+    dm_text_center(shell_,kCenter,brightness?216:222,"RELEASE TO SAVE",&hint);
+}
+void WatchUi::DrawClockFace() {
+    if (clock_ != nullptr) { lv_obj_delete(clock_); clock_ = nullptr; }
+    if (date_ != nullptr) { lv_obj_delete(date_); date_ = nullptr; }
+    dm_style_t big = {6, 5, 1, 0xFFFFFFu, 0x101010u};
+    clock_ = dm_text_center(shell_, kCenter, 140, time_.c_str(), &big);
+    dm_style_t small = {2, 1, 1, 0xF5A524u, 0x101010u};
+    date_ = dm_text_center(shell_, kCenter, 214, date_text_.c_str(), &small);
 }
 void WatchUi::SetInfo(const Info& info) {
     bool wifi_changed=info_.networks!=info.networks||info_.network!=info.network||info_.wifi_status!=info.wifi_status;
@@ -566,6 +581,9 @@ void WatchUi::SetInfo(const Info& info) {
 }
 void WatchUi::Tick(const char* clock,const char* date){
     time_=clock;date_text_=date;
+    // The Clock page draws into canvases and has to be repainted; Home still
+    // uses a plain label, which can just be re-lettered.
+    if(page_==Page::Clock){DrawClockFace();return;}
     if(clock_)lv_label_set_text(clock_,clock);
     if(date_)lv_label_set_text(date_,date);
 }
@@ -614,9 +632,9 @@ void WatchUi::OpenKeyboard(FieldKind kind,const std::string& title,const std::st
     field_=lv_textarea_create(shell_);
     lv_obj_set_pos(field_,70,62);lv_obj_set_size(field_,220,34);
     lv_obj_set_style_pad_all(field_,5,0);
-    lv_obj_set_style_bg_color(field_,lv_color_hex(0x232C3A),0);
+    lv_obj_set_style_bg_color(field_,lv_color_hex(0x141414),0);
     lv_obj_set_style_text_color(field_,lv_color_white(),0);
-    lv_obj_set_style_border_color(field_,lv_color_hex(0x58667A),0);
+    lv_obj_set_style_border_color(field_,lv_color_hex(kAccent),0);
     lv_obj_set_style_border_width(field_,1,0);
     lv_textarea_set_one_line(field_,true);
     const bool secret = kind == FieldKind::Password;
@@ -684,7 +702,7 @@ void WatchUi::KeyboardKeys(){
             std::string key(1,c);
             Button(keys_,x,y_abs-92,w,h,key.c_str(),nullptr,
                    [this,key]{ if(field_) lv_textarea_add_text(field_,key.c_str()); },
-                   0x232C3A);
+                   0x1A1A1A);
             x+=w+4;
         }
     }
