@@ -491,7 +491,10 @@ void WatchUi::UpdateNotice() {
     // resized here too - not only when Column() first lays it out.
     if (column_ != nullptr && dot_style_ && lv_obj_get_y(column_) == 100)
         lv_obj_set_height(column_, info_.notice.empty() ? 212 : 150);
-    if (!info_.notice.empty() && page_ != Page::Voice) {
+    // The keyboard's Cancel/Submit row occupies this banner's normal bottom
+    // position. Keep that action row usable while text input is open; the
+    // notice is shown again when the keyboard returns to its caller page.
+    if (!info_.notice.empty() && page_ != Page::Voice && page_ != Page::Keyboard) {
         // It used to be a navy pill in the old typeface, dropped in the middle
         // of the screen where it covered a row of whatever list was open. Now
         // it is a strip along the bottom, in the page's own language.

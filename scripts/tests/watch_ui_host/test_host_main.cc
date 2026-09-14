@@ -292,9 +292,12 @@ int main() {
     snap("keyboard_open");
     lv_obj_t* field = find_textarea(lv_screen_active());
     check(field != nullptr, "Keyboard textarea found");
+    const int keyboard_children = count_children_recursive(lv_screen_active());
     WatchUi::Info notice_info = info;
     notice_info.notice = "Saved";
     ui.SetInfo(notice_info); tick_lv();
+    check(count_children_recursive(lv_screen_active()) == keyboard_children,
+          "Notice stays out of the keyboard action area");
     notice_info.notice.clear();
     ui.SetInfo(notice_info); tick_lv();
     check(ui.page() == WatchUi::Page::Keyboard && find_textarea(lv_screen_active()) == field,
