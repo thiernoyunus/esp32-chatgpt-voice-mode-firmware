@@ -6,6 +6,9 @@ import tempfile
 
 root = Path(__file__).resolve().parents[2]
 board = (root / 'main/boards/waveshare/esp32-s3-touch-lcd-1.85c/esp32-s3-touch-lcd-1.85c.cc').read_text()
+failure_start = board.index('if (esp_lcd_touch_read_data(touch_handle_) != ESP_OK)')
+failure_end = board.index('vTaskDelete(nullptr)', failure_start)
+assert 'app.OnWatchAction(WatchUi::Action::EndCall' in board[failure_start:failure_end]
 start = board.index('            // Feed the toolkit once per sample;')
 # End at the last statement of the per-sample touch dispatch (before the
 # surrounding while-loop's closing brace). The old '#endif' terminator was

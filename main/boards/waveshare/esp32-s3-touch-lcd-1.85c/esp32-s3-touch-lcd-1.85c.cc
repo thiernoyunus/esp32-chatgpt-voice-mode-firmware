@@ -476,6 +476,12 @@ private:
                         auto_sleep_rearmed = true;
                         consecutive_read_failures = 0;
                     } else {
+                        // The touch task is not the owner of the voice
+                        // session. Ask the main task to perform the same
+                        // teardown as the on-screen End button before this
+                        // task disappears.
+                        auto& app = Application::GetInstance();
+                        app.OnWatchAction(WatchUi::Action::EndCall, 0, "", "");
                         display_->FeedTouch(false, last_x, last_y);
                         ESP_LOGE(TAG, "Touch controller unresponsive, stopping gesture task");
                         vTaskDelete(nullptr);
