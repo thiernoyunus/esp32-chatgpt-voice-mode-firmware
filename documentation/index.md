@@ -29,3 +29,4 @@ This handbook is meant to be read in order. Later chapters assume the concepts i
 ### Part IV — Reference
 
 12. [Upstream](reference/upstream.md) — Relationship with xiaozhi-esp32
+13. [Barge-in](reference/barge-in.md) — Talking over Apollo: what has been tried, and why it failed
