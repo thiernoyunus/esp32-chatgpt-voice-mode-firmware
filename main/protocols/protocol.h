@@ -86,6 +86,9 @@ public:
     virtual void SendConfirm(bool ok) { (void)ok; }
     // Cancels an open listen session without committing the audio as a turn.
     virtual void SendListenCancel() {}
+    // Told once a frame has been accepted for playback, so a protocol that
+    // tracks call readiness can record the last link it can check itself.
+    virtual void MarkPlaybackAdmitted() {}
 
 protected:
     std::function<void(const cJSON* root)> on_incoming_json_;

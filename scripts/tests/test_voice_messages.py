@@ -12,6 +12,8 @@ def main():
                      source.index("void CodexVoiceProtocol::StartSpeaking(")]
     program = r'''
 #include "cJSON.h"
+#include "voice_readiness.h"
+#include <atomic>
 #include <cassert>
 #include <cstdint>
 #include <cstring>
@@ -44,10 +46,27 @@ struct Application {
     void Schedule(std::function<void()> function) { queue.push_back(std::move(function)); }
     void Drain() { auto pending = std::move(queue); queue.clear(); for (auto& call : pending) call(); }
 };
+/* The parser saves a chosen chat and reads the clock; neither is what this
+ * test is about, so both are recorded and ignored. */
+struct Settings {
+    Settings(const char*, bool) {}
+    std::string GetString(const char*, const char* fallback = "") { return fallback; }
+    void SetString(const char*, const std::string&) {}
+};
+uint32_t NowMilliseconds() { return 0; }
+bool AtOrAfter(uint32_t sample, uint32_t since) {
+    return static_cast<int32_t>(sample - since) >= 0;
+}
 struct CodexVoiceProtocol {
     struct ModelChoice { std::string id, name; };
+    struct ChatChoice { std::string id, name; };
     std::vector<ModelChoice> models_{{"", "Default"}};
+    std::vector<ChatChoice> chats_;
     std::string request_id_ = "current", error;
+    /* Written by the parser when a reply is expected; read by the watchdog. */
+    std::atomic<uint32_t> last_audio_frame_ms_{0}, speech_expected_since_ms_{0};
+    std::string transcript_partial_, transcript_role_;
+    uint32_t transcript_emitted_at_ = 0;
     void* peer_ = nullptr;
     bool opened = true;
     int speaking = 0;
@@ -57,6 +76,8 @@ struct CodexVoiceProtocol {
     void StartSpeaking() { ++speaking; }
     void StopSpeaking() { speaking = 0; }
     void EmitTranscript(const char*, const char*) {}
+    void StreamTranscript(const char*, const char*) {}
+    void MarkStage(uint32_t) {}
     void HandleSignal(const char*, size_t);
     void HandleRealtimeEvent(const uint8_t*, size_t);
     void Event(const std::string& value) { HandleRealtimeEvent(reinterpret_cast<const uint8_t*>(value.data()), value.size()); }
@@ -134,7 +155,9 @@ int main() {
         path = Path(directory)
         (path / "test.cc").write_text(program)
         subprocess.run(["cc", "-c", str(cjson / "cJSON.c"), "-o", str(path / "json.o")], check=True)
-        subprocess.run(["c++", "-std=c++17", "-I", str(cjson), str(path / "test.cc"), str(path / "json.o"), "-o", str(path / "test")], check=True)
+        subprocess.run(["c++", "-std=c++17", "-I", str(cjson),
+                        "-I", str(root / "main/protocols"),
+                        str(path / "test.cc"), str(path / "json.o"), "-o", str(path / "test")], check=True)
         subprocess.run([str(path / "test")], check=True, timeout=5)
     print("PASS: live model/activity messages validate input and reject stale call updates")
 

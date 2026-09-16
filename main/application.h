@@ -16,6 +16,7 @@
 #include "protocol.h"
 #include "ota.h"
 #include "audio_service.h"
+#include "audio/voice_preroll.h"
 #include "device_state.h"
 #include "device_state_machine.h"
 #include "display/watch_ui.h"
@@ -140,6 +141,13 @@ private:
     AecMode aec_mode_ = kAecOff;
     std::string last_error_message_;
     AudioService audio_service_;
+    /* The opening frames of a call, held until the device is listening. Taking
+     * them out of the speaker queues is deliberate: entering Listening clears
+     * those queues, and the greeting arrives just before that happens. A
+     * greeting is a second or two of speech and the gap it has to survive is
+     * between the voice channel opening and the microphone starting, so one
+     * second of frames covers it several times over. */
+    VoicePreroll<std::unique_ptr<AudioStreamPacket>> voice_preroll_{kVoicePrerollFrames};
     std::unique_ptr<Ota> ota_;
 
     bool has_server_time_ = false;
@@ -185,6 +193,8 @@ private:
     void BeginWakeWordInvoke(const std::string& wake_word);
     void ContinueWakeWordInvoke(const std::string& wake_word);
     void StartListeningAudio();
+    /* Holds or hands over the opening frames of a call; see voice_preroll.h. */
+    void FlushVoicePreroll();
     void FinishSpeaking();
     void InitializeSystemTime();
     void SleepScreen();

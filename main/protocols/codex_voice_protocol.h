@@ -2,6 +2,7 @@
 #define CODEX_VOICE_PROTOCOL_H
 
 #include "protocol.h"
+#include "voice_readiness.h"
 
 #include <esp_peer.h>
 #include <freertos/FreeRTOS.h>
@@ -47,6 +48,15 @@ public:
     // call is worth making. Reading it clears it, so one stall buys one retry.
     bool TakeStallRecovery() { return stall_recovery_.exchange(false); }
 
+    // The five links a call needs, in the order a healthy one reaches them.
+    // A silent call can then say which link never arrived instead of only that
+    // nothing was heard.
+    uint32_t VoiceStageMask() const { return readiness_.Mask(); }
+    std::string DescribeVoiceStages() const { return readiness_.Describe(); }
+    // The application calls this once a frame has been accepted for playback,
+    // which is the last link the device can check for itself.
+    void MarkPlaybackAdmitted() override { MarkStage(kVoiceStagePlaybackAdmitted); }
+
 private:
     std::vector<ModelChoice> models_{{"", "Default"}};
     std::vector<ChatChoice> chats_;
@@ -59,6 +69,7 @@ private:
     std::atomic<bool> speaking_{false};
     std::string request_id_;
     uint32_t uplink_pts_ms_ = 0;
+    VoiceReadiness readiness_;
 
     bool OpenControlChannel();
     bool SendText(const std::string& text) override;
@@ -71,6 +82,8 @@ private:
     void EmitTranscript(const char* role, const char* text);
     void StreamTranscript(const char* role, const char* delta);
     void Fail(const std::string& message);
+    // Records a link once, and says so the first time only.
+    void MarkStage(uint32_t stage);
     void RunPeerLoop();
     // Recovers a reply that is being transcribed but never reaches the speaker.
     void CheckInboundAudioStall();

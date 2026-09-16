@@ -14,6 +14,8 @@ def main():
     voice = (source / "protocols/codex_voice_protocol.cc").read_text()
     audio = (source / "audio/audio_service.cc").read_text()
     audio_header = (source / "audio/audio_service.h").read_text()
+    preroll_header = (source / "audio/voice_preroll.h").read_text()
+    readiness_header = (source / "protocols/voice_readiness.h").read_text()
     continuing = app[app.index("void Application::ContinueOpenAudioChannel("):
                      app.index("void Application::HandleStartListeningEvent()")]
     gain = audio[audio.index("namespace {"):audio.index("#define RATE_CVT_CFG")]
@@ -36,13 +38,26 @@ def main():
 #include <iostream>
 #include <string>
 #include <vector>
+
+#define TAG "Application"
+#define ESP_LOGW(...) do {} while (0)
+static inline int64_t esp_timer_get_time() { return 0; }
 GAIN_CODE
 FRAME_CODE
+VOICE_PREROLL_CODE
+VOICE_READINESS_CODE
 static_assert(OPUS_FRAME_DURATION_MS == 20);
 struct AudioStreamPacket {};
 struct AudioService {
     int accepted = 0, resets = 0;
-    void PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket>) { ++accepted; }
+    /* The speaker queue refuses frames when it is full; whoever pushes has to
+     * look at the answer. */
+    bool full = false;
+    bool PushPacketToDecodeQueue(std::unique_ptr<AudioStreamPacket>) {
+        if (full) return false;
+        ++accepted;
+        return true;
+    }
     void ResetDecoder() { ++resets; }
 };
 
@@ -71,6 +86,8 @@ struct Protocol {
     std::function<void()> closed;
     std::function<void(std::unique_ptr<AudioStreamPacket>)> incoming;
     bool IsAudioChannelOpened() const { return opened; }
+    void MarkPlaybackAdmitted() { ++admitted; }
+    int admitted = 0;
     void OnAudioChannelClosed(std::function<void()> callback) { closed = callback; }
     void OnIncomingAudio(std::function<void(std::unique_ptr<AudioStreamPacket>)> callback) { incoming = callback; }
 };
@@ -79,6 +96,7 @@ struct Application {
     void ContinueOpenAudioChannel(ListeningMode mode);
     void SetListeningMode(ListeningMode) { state = kDeviceStateListening; }
     AudioService audio_service_;
+    VoicePreroll<std::unique_ptr<AudioStreamPacket>> voice_preroll_{kVoicePrerollFrames};
     Protocol storage;
     Protocol* protocol_ = &storage;
     DeviceState state = kDeviceStateSpeaking;
@@ -102,6 +120,8 @@ struct CodexVoiceProtocol {
     std::atomic<bool> closing_{false}, channel_open_{false};
     EventBits_t events = 0;
     EventBits_t* peer_events_ = &events;
+    VoiceReadiness readiness_;
+    void MarkStage(uint32_t stage) { readiness_.Mark(stage); }
     static int OnDataChannelOpen(esp_peer_data_channel_info_t*, void*);
 };
 OPEN_CALLBACK
@@ -164,6 +184,8 @@ int main() {
     std::cout << "PASS: valid open succeeds; closed, failed, and invalid opens stay unready\n";
 }
 '''.replace("APP_CALLBACK", closed + incoming).replace("OPEN_CALLBACK", opened).replace("CONTINUE_CALLBACK", continuing).replace("GAIN_CODE", gain).replace("FRAME_CODE", frame)
+    harness = harness.replace("VOICE_PREROLL_CODE", preroll_header)
+    harness = harness.replace("VOICE_READINESS_CODE", readiness_header)
     harness = harness.replace("int main() {", r'''int main() {
     for (int scenario = 0; scenario < 3; ++scenario) {
         Application app;
@@ -175,14 +197,44 @@ int main() {
         assert((app.state == kDeviceStateListening) == (scenario == 2));
     }
     for (bool open : {false, true}) {
-        for (auto state : {kDeviceStateIdle, kDeviceStateListening, kDeviceStateSpeaking}) {
+        for (auto state : {kDeviceStateIdle, kDeviceStateConnecting, kDeviceStateListening,
+                           kDeviceStateSpeaking}) {
             Application app;
             app.Register();
             app.storage.opened = open;
             app.state = state;
             app.storage.incoming(std::make_unique<AudioStreamPacket>());
-            assert(app.audio_service_.accepted == (open && state != kDeviceStateIdle ? 1 : 0));
+            const bool speaking = state == kDeviceStateListening || state == kDeviceStateSpeaking;
+            const bool connecting = state == kDeviceStateConnecting;
+            assert(app.audio_service_.accepted == (open && speaking ? 1 : 0));
+            /* The opening of a call arrives while the device is still
+             * connecting, and starting to listen clears the speaker queues.
+             * Those frames have to be held, not dropped. */
+            assert(app.voice_preroll_.Size() == (open && connecting ? 1 : 0));
+            assert(!open || !speaking || app.storage.admitted == 1);
         }
+    }
+    /* A caller that ends before it starts leaves nothing to speak into the
+     * next one. */
+    {
+        Application app;
+        app.Register();
+        app.storage.opened = true;
+        app.state = kDeviceStateConnecting;
+        app.storage.incoming(std::make_unique<AudioStreamPacket>());
+        assert(app.voice_preroll_.Size() == 1);
+        app.voice_preroll_.Clear();
+        assert(app.voice_preroll_.Empty());
+    }
+    /* A full speaker queue is reported as a dropped frame, not as success. */
+    {
+        Application app;
+        app.Register();
+        app.storage.opened = true;
+        app.state = kDeviceStateListening;
+        app.audio_service_.full = true;
+        app.storage.incoming(std::make_unique<AudioStreamPacket>());
+        assert(app.audio_service_.accepted == 0 && app.storage.admitted == 0);
     }
     std::cout << "PASS: live audio plays without captions; closed calls stay silent; gain and framing checked\n";
 ''')

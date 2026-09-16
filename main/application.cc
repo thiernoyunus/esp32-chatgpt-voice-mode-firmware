@@ -735,9 +735,32 @@ void Application::InitializeProtocol() {
 
     protocol_->OnIncomingAudio([this](std::unique_ptr<AudioStreamPacket> packet) {
         // Live audio and captions arrive independently; captions must not gate playback.
-        if (protocol_->IsAudioChannelOpened() &&
-            (GetDeviceState() == kDeviceStateListening || GetDeviceState() == kDeviceStateSpeaking)) {
-            audio_service_.PushPacketToDecodeQueue(std::move(packet));
+        if (!protocol_->IsAudioChannelOpened()) {
+            return;
+        }
+        const DeviceState state = GetDeviceState();
+        if (state == kDeviceStateListening || state == kDeviceStateSpeaking) {
+            if (audio_service_.PushPacketToDecodeQueue(std::move(packet))) {
+                protocol_->MarkPlaybackAdmitted();
+            } else {
+                /* The speaker queue was full and this frame is gone. Say so: a
+                 * reply that goes quiet mid-sentence looks like a network
+                 * fault, and this is the one place that can tell the two
+                 * apart. */
+                static int64_t last_full_report_us = 0;
+                const int64_t now_us = esp_timer_get_time();
+                if (now_us - last_full_report_us >= 1000000) {
+                    last_full_report_us = now_us;
+                    ESP_LOGW(TAG, "Speaker queue full; dropped a frame of the reply");
+                }
+            }
+            return;
+        }
+        /* The greeting lands while the call is still connecting, before the
+         * device starts listening - and starting to listen clears the speaker
+         * queues, which would take that greeting with it. Hold it instead. */
+        if (state == kDeviceStateConnecting) {
+            voice_preroll_.Push(std::move(packet));
         }
     });
 
@@ -769,8 +792,14 @@ void Application::InitializeProtocol() {
         });
     });
 
+    /* Three kinds of message reach this, and all three are made by the voice
+     * protocol itself rather than sent over the wire: "tts" and "stt" are the
+     * captions it builds from the call's transcripts, and "mcp" is a request
+     * for one of this device's own tools. The dialect this once spoke was much
+     * larger - emotions, accent colours, countdown arcs, system commands,
+     * alerts - and every one of those came from a server that no longer
+     * exists. */
     protocol_->OnIncomingJson([this, display](const cJSON* root) {
-        // Parse JSON data
         auto type = cJSON_GetObjectItem(root, "type");
         if (!cJSON_IsString(type)) {
             ESP_LOGW(TAG, "Incoming JSON message has no type");
@@ -825,70 +854,11 @@ void Application::InitializeProtocol() {
                     display->SetChatMessage("user", message.c_str());
                 });
             }
-        } else if (strcmp(type->valuestring, "llm") == 0) {
-            auto emotion = cJSON_GetObjectItem(root, "emotion");
-            if (cJSON_IsString(emotion)) {
-                Schedule([display, emotion_str = std::string(emotion->valuestring)]() {
-                    display->SetEmotion(emotion_str.c_str());
-                });
-            }
-        } else if (strcmp(type->valuestring, "accent") == 0) {
-            auto color = cJSON_GetObjectItem(root, "color");
-            if (cJSON_IsString(color)) {
-                Schedule([display, color_str = std::string(color->valuestring)]() {
-                    display->SetAccentColor(color_str.c_str());
-                });
-            }
-        } else if (strcmp(type->valuestring, "arc") == 0) {
-            auto started_at = cJSON_GetObjectItem(root, "startedAtMs");
-            auto ends_at = cJSON_GetObjectItem(root, "endsAtMs");
-            if (cJSON_IsNumber(started_at) && cJSON_IsNumber(ends_at)) {
-                Schedule([display, started_at_ms = (int64_t)started_at->valuedouble,
-                          ends_at_ms = (int64_t)ends_at->valuedouble]() {
-                    display->SetAccentRingProgress(started_at_ms, ends_at_ms);
-                });
-            } else {
-                Schedule([display]() { display->ClearAccentRingProgress(); });
-            }
         } else if (strcmp(type->valuestring, "mcp") == 0) {
             auto payload = cJSON_GetObjectItem(root, "payload");
             if (cJSON_IsObject(payload)) {
                 McpServer::GetInstance().ParseMessage(payload);
             }
-        } else if (strcmp(type->valuestring, "system") == 0) {
-            auto command = cJSON_GetObjectItem(root, "command");
-            if (cJSON_IsString(command)) {
-                ESP_LOGI(TAG, "System command: %s", command->valuestring);
-                if (strcmp(command->valuestring, "reboot") == 0) {
-                    // Do a reboot if user requests a OTA update
-                    Schedule([this]() { Reboot(); });
-                } else {
-                    ESP_LOGW(TAG, "Unknown system command: %s", command->valuestring);
-                }
-            }
-        } else if (strcmp(type->valuestring, "alert") == 0) {
-            auto status = cJSON_GetObjectItem(root, "status");
-            auto message = cJSON_GetObjectItem(root, "message");
-            auto emotion = cJSON_GetObjectItem(root, "emotion");
-            if (cJSON_IsString(status) && cJSON_IsString(message) && cJSON_IsString(emotion)) {
-                Alert(status->valuestring, message->valuestring, emotion->valuestring,
-                      Lang::Sounds::OGG_VIBRATION);
-            } else {
-                ESP_LOGW(TAG, "Alert command requires status, message and emotion");
-            }
-#if CONFIG_RECEIVE_CUSTOM_MESSAGE
-        } else if (strcmp(type->valuestring, "custom") == 0) {
-            auto payload = cJSON_GetObjectItem(root, "payload");
-            ESP_LOGI(TAG, "Received custom message: %s", cJSON_PrintUnformatted(root));
-            if (cJSON_IsObject(payload)) {
-                Schedule(
-                    [this, display, payload_str = std::string(cJSON_PrintUnformatted(payload))]() {
-                        display->SetChatMessage("system", payload_str.c_str());
-                    });
-            } else {
-                ESP_LOGW(TAG, "Invalid custom message format: missing payload");
-            }
-#endif
         } else {
             ESP_LOGW(TAG, "Unknown message type: %s", type->valuestring);
         }
@@ -1460,6 +1430,8 @@ void Application::HandleStateChangedEvent() {
     switch (new_state) {
         case kDeviceStateUnknown:
         case kDeviceStateIdle:
+            // A call that ended before it started must not speak into the next one.
+            voice_preroll_.Clear();
             voice_model_picker_open_ = false;
             display->HideVoiceModels();
             display->SetStatus(Lang::Strings::STANDBY);
@@ -1538,6 +1510,29 @@ void Application::StartListeningAudio() {
     // whether the mic reopens after Apollo speaks.
     reopen_listening_after_speak_ = true;
     StartListenWatchdog();
+    // After the queue clear above, never before: anything held for this call is
+    // the beginning of the reply the user is waiting to hear.
+    FlushVoicePreroll();
+}
+
+void Application::FlushVoicePreroll() {
+    if (voice_preroll_.Empty()) {
+        return;
+    }
+    const size_t held = voice_preroll_.Size();
+    const size_t delivered = voice_preroll_.Flush(
+        [this](std::unique_ptr<AudioStreamPacket> packet) {
+            return audio_service_.PushPacketToDecodeQueue(std::move(packet));
+        });
+    if (delivered > 0) {
+        protocol_->MarkPlaybackAdmitted();
+    }
+    if (delivered < held) {
+        ESP_LOGW(TAG, "Speaker queue full while opening the call; %u of %u opening frames were dropped",
+                 (unsigned) (held - delivered), (unsigned) held);
+    } else {
+        ESP_LOGI(TAG, "Playing %u opening frames held since the call connected", (unsigned) delivered);
+    }
 }
 
 void Application::ConfigureWakeWordForListening() {

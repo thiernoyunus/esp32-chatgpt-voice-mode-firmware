@@ -95,6 +95,32 @@ int OpusPacketDurationMs(const uint8_t* data, size_t size) {
 
 static_assert(OpusFrameDurationMs(31) == 20);
 
+/* What to tell someone whose call went quiet, decided by the link that never
+ * arrived. "Nothing came through" is true of five different faults, and only one
+ * of them is worth retrying unchanged; naming the link is what makes the
+ * message worth reading. */
+std::string StallMessage(uint32_t missing_stage, bool will_retry) {
+    const char* cause = "Apollo's voice stopped coming through";
+    switch (missing_stage) {
+        case kVoiceStagePeerConnected:
+        case kVoiceStageAudioTrack:
+            cause = "Apollo never received the reply's audio";
+            break;
+        case kVoiceStageEventChannel:
+            cause = "Apollo's voice channel never opened";
+            break;
+        case kVoiceStageSessionStarted:
+            cause = "Apollo's voice session never started";
+            break;
+        case kVoiceStagePlaybackAdmitted:
+            cause = "Apollo's reply never reached the speaker";
+            break;
+        default:
+            break;
+    }
+    return std::string(cause) + (will_retry ? ". Reconnecting." : ". Tap to try again.");
+}
+
 const char* ReadErrorMessage(const cJSON* root) {
     const cJSON* error = cJSON_GetObjectItemCaseSensitive(root, "error");
     const cJSON* message = cJSON_IsObject(error)
@@ -214,6 +240,7 @@ bool CodexVoiceProtocol::OpenAudioChannel() {
     uplink_pts_ms_ = 0;
     last_audio_frame_ms_.store(0);
     speech_expected_since_ms_.store(0);
+    readiness_.Reset();
     server_sample_rate_ = 16000;
     server_frame_duration_ = 20;
     request_id_ = std::to_string(esp_random()) + "-" + std::to_string(NowMilliseconds());
@@ -293,6 +320,10 @@ bool CodexVoiceProtocol::OpenAudioChannel() {
         return false;
     }
 
+    /* Say what the call actually has at the moment it calls itself open: it
+     * can reach this point with no audio track and no live session, and that is
+     * the state that used to be reported as simply ready. */
+    ESP_LOGI(TAG, "Voice call open with: %s", readiness_.Describe().c_str());
     if (on_connected_ != nullptr) {
         on_connected_();
     }
@@ -614,6 +645,9 @@ void CodexVoiceProtocol::HandleRealtimeEvent(const uint8_t* data, size_t size) {
     }
     const char* event_type = type->valuestring;
     ESP_LOGD(TAG, "Voice event: %s", event_type);
+    // Real traffic on the event channel, so the voice session behind it is live
+    // rather than merely connected.
+    MarkStage(kVoiceStageSessionStarted);
     if (strcmp(event_type, "error") == 0 ||
         strcmp(event_type, "invalid_request_error") == 0) {
         Fail(ReadErrorMessage(root));
@@ -737,6 +771,13 @@ void CodexVoiceProtocol::StreamTranscript(const char* role, const char* delta) {
     EmitTranscript(role, TranscriptTail(transcript_partial_).c_str());
 }
 
+void CodexVoiceProtocol::MarkStage(uint32_t stage) {
+    if (readiness_.Mark(stage)) {
+        ESP_LOGI(TAG, "Voice path reached %s (now: %s)", VoiceStageName(stage),
+                 readiness_.Describe().c_str());
+    }
+}
+
 void CodexVoiceProtocol::Fail(const std::string& message) {
     if (closing_ || (xEventGroupGetBits(peer_events_) & kVoiceFailedBit) != 0) {
         return;
@@ -787,22 +828,27 @@ void CodexVoiceProtocol::CheckInboundAudioStall() {
     if (!speech_expected_since_ms_.compare_exchange_strong(expecting, 0)) {
         return;
     }
-    ESP_LOGE(TAG, "No reply audio for %lu ms; restarting the voice call",
-             (unsigned long)(now - quiet_since));
-    if (stall_retries_.fetch_add(1) < kMaxStallRetries) {
+    /* The link that never arrived is the difference between a network fault
+     * and a playback fault, so report it rather than only the silence. */
+    const uint32_t missing_stage = readiness_.FirstMissing();
+    const bool will_retry = stall_retries_.fetch_add(1) < kMaxStallRetries;
+    ESP_LOGE(TAG, "No reply audio for %lu ms; reached %s, missing %s",
+             (unsigned long)(now - quiet_since), readiness_.Describe().c_str(),
+             missing_stage == 0 ? "nothing" : VoiceStageName(missing_stage));
+    if (will_retry) {
         stall_recovery_.store(true);
-        Fail("Apollo's voice stopped coming through. Reconnecting.");
-    } else {
-        // Out of retries. Say what is actually true rather than promising a
-        // reconnect that is not coming.
-        Fail("Apollo's voice isn't coming through. Tap to try again.");
     }
+    Fail(StallMessage(missing_stage, will_retry));
 }
 
 int CodexVoiceProtocol::OnPeerState(esp_peer_state_t state, void* context) {
     auto* protocol = static_cast<CodexVoiceProtocol*>(context);
     ESP_LOGI(TAG, "Peer state: %d", static_cast<int>(state));
-    if (state == ESP_PEER_STATE_DATA_CHANNEL_CONNECTED) {
+    if (state == ESP_PEER_STATE_CONNECTED) {
+        protocol->MarkStage(kVoiceStagePeerConnected);
+    } else if (state == ESP_PEER_STATE_REMOTE_AUDIO_TRACK_ADDED) {
+        protocol->MarkStage(kVoiceStageAudioTrack);
+    } else if (state == ESP_PEER_STATE_DATA_CHANNEL_CONNECTED) {
         esp_peer_data_channel_cfg_t channel = {};
         channel.type = ESP_PEER_DATA_CHANNEL_RELIABLE;
         channel.ordered = true;
@@ -850,6 +896,9 @@ int CodexVoiceProtocol::OnPeerAudio(esp_peer_audio_frame_t* frame, void* context
     ++received_frames;
     if (is_real_audio) {
         ++real_audio_frames;
+        // Either the announced track or its first real frame is enough: both
+        // mean the reply's audio is reaching the device.
+        protocol->MarkStage(kVoiceStageAudioTrack);
         // A reply arrived, so the run of silent calls is over and the next
         // stall gets a full budget again.
         protocol->stall_retries_.store(0);
@@ -893,6 +942,7 @@ int CodexVoiceProtocol::OnDataChannelOpen(esp_peer_data_channel_info_t* channel,
         channel != nullptr && channel->label != nullptr &&
         strcmp(channel->label, "oai-events") == 0) {
         protocol->channel_open_ = true;
+        protocol->MarkStage(kVoiceStageEventChannel);
         xEventGroupSetBits(protocol->peer_events_, kVoiceReadyBit);
     }
     return 0;

@@ -22,8 +22,11 @@ def main():
 
     playback = int(re.search(r"#define MAX_PLAYBACK_TASKS_IN_QUEUE (\d+)", header).group(1))
     encode = int(re.search(r"#define MAX_ENCODE_TASKS_IN_QUEUE (\d+)", header).group(1))
+    # This workspace builds only Codex Voice, so the frame length is no longer
+    # behind a build flag; it is still pinned here because both buffers below
+    # are counted in frames.
     frame_ms = int(re.search(
-        r"#ifdef CONFIG_APOLLO_CODEX_VOICE\s*\n#define OPUS_FRAME_DURATION_MS (\d+)",
+        r"#define OPUS_FRAME_DURATION_MS (\d+)",
         header).group(1))
 
     # The output task must not be able to empty the buffer inside one scheduler
@@ -49,9 +52,13 @@ def main():
     # the buffer drains to empty and the speaker goes silent mid-reply.
     assert codec > output, f"opus_codec priority {codec} must exceed audio_output {output}"
 
-    assert re.search(
-        r"constexpr size_t kMinimumVoiceAudioBytes = 3;", protocol
-    ), "three-byte Opus packets must satisfy the inbound-audio threshold"
+    # Opus sends 1-3 byte comfort-noise frames when there is nothing to say, so
+    # the threshold has to sit above them: at 3 a track carrying only silence
+    # looked alive to the watchdog and to the silent-call retry budget.
+    minimum_voice_bytes = int(re.search(
+        r"constexpr size_t kMinimumVoiceAudioBytes = (\d+);", protocol).group(1))
+    assert minimum_voice_bytes > 3, (
+        f"a {minimum_voice_bytes}-byte threshold counts comfort noise as speech")
 
     # What the watchdog does is now driven through the real transitions in
     # scripts/tests/test_reply_audio_watchdog.py. The assertions that used to
