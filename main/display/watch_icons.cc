@@ -1,4 +1,4 @@
-// Watch face icon assets for Apollo round ESP32/LVGL UI
+// Watch face icon assets for the round ESP32/LVGL UI
 // Generated from official sources - see documentation/watch-icons.md for attribution
 //
 // Format: A8 (alpha-only,1 byte per pixel)

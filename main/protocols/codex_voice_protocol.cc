@@ -55,7 +55,7 @@ std::string BuildConnectionUrl(const std::string& base_url, const std::string& d
     while (!url.empty() && url.back() == '/') {
         url.pop_back();
     }
-    return url + "/agents/apollo/" + device_id + "?token=" + token;
+    return url + "/agents/voicemode/" + device_id + "?token=" + token;
 }
 
 constexpr int OpusFrameDurationMs(uint8_t config) {
@@ -100,20 +100,20 @@ static_assert(OpusFrameDurationMs(31) == 20);
  * of them is worth retrying unchanged; naming the link is what makes the
  * message worth reading. */
 std::string StallMessage(uint32_t missing_stage, bool will_retry) {
-    const char* cause = "Apollo's voice stopped coming through";
+    const char* cause = "The voice stopped coming through";
     switch (missing_stage) {
         case kVoiceStagePeerConnected:
         case kVoiceStageAudioTrack:
-            cause = "Apollo never received the reply's audio";
+            cause = "The reply's audio never arrived";
             break;
         case kVoiceStageEventChannel:
-            cause = "Apollo's voice channel never opened";
+            cause = "The voice channel never opened";
             break;
         case kVoiceStageSessionStarted:
-            cause = "Apollo's voice session never started";
+            cause = "The voice session never started";
             break;
         case kVoiceStagePlaybackAdmitted:
-            cause = "Apollo's reply never reached the speaker";
+            cause = "The reply never reached the speaker";
             break;
         default:
             break;
@@ -154,12 +154,12 @@ bool CodexVoiceProtocol::OpenControlChannel() {
     }
     websocket_.reset();
 
-    Settings settings("apollo", false);
-    const std::string base_url = settings.GetString("url", CONFIG_APOLLO_URL);
-    const std::string token = settings.GetString("token", CONFIG_APOLLO_TOKEN);
-    std::string device_id = settings.GetString("device_id", CONFIG_APOLLO_DEVICE_ID);
+    Settings settings("voicemode", false);
+    const std::string base_url = settings.GetString("url", CONFIG_VOICEMODE_URL);
+    const std::string token = settings.GetString("token", CONFIG_VOICEMODE_TOKEN);
+    std::string device_id = settings.GetString("device_id", CONFIG_VOICEMODE_DEVICE_ID);
     if (base_url.empty()) {
-        ESP_LOGE(TAG, "Apollo URL is not configured");
+        ESP_LOGE(TAG, "Voice mode URL is not configured");
         return false;
     }
     if (device_id.empty()) {
@@ -168,7 +168,7 @@ bool CodexVoiceProtocol::OpenControlChannel() {
 
     websocket_ = Board::GetInstance().GetNetwork()->CreateWebSocket(1);
     if (websocket_ == nullptr) {
-        ESP_LOGE(TAG, "Could not create Apollo control channel");
+        ESP_LOGE(TAG, "Could not create control channel");
         return false;
     }
     websocket_->OnData([this](const char* data, size_t size, bool binary) {
@@ -180,11 +180,11 @@ bool CodexVoiceProtocol::OpenControlChannel() {
     websocket_->OnDisconnected([this]() {
         channel_open_ = false;
         if (!closing_) {
-            Fail("Apollo's Codex Voice bridge disconnected.");
+            Fail("The Mac disconnected.");
         }
     });
     if (!websocket_->Connect(BuildConnectionUrl(base_url, device_id, token).c_str())) {
-        ESP_LOGE(TAG, "Could not connect to Apollo control channel");
+        ESP_LOGE(TAG, "Could not connect to control channel");
         websocket_.reset();
         return false;
     }
@@ -198,11 +198,11 @@ bool CodexVoiceProtocol::OpenControlChannel() {
     cJSON_free(hello_json);
     cJSON_Delete(hello);
     if (!hello_sent) {
-        ESP_LOGE(TAG, "Could not identify Apollo control channel");
+        ESP_LOGE(TAG, "Could not identify control channel");
         websocket_.reset();
         return false;
     }
-    ESP_LOGI(TAG, "Apollo control channel ready");
+    ESP_LOGI(TAG, "control channel ready");
     return true;
 }
 
@@ -222,7 +222,7 @@ void CodexVoiceProtocol::SendMcpMessage(const std::string& payload) {
     cJSON_AddNumberToObject(root, "ts", NowMilliseconds());
     char* serialized = cJSON_PrintUnformatted(root);
     if (serialized != nullptr && !SendText(serialized)) {
-        ESP_LOGW(TAG, "MCP response dropped: Apollo control channel is offline");
+        ESP_LOGW(TAG, "MCP response dropped: control channel is offline");
     }
     cJSON_free(serialized);
     cJSON_Delete(root);
@@ -288,7 +288,7 @@ bool CodexVoiceProtocol::OpenAudioChannel() {
 
     esp_peer_pre_generate_cert();
     if (esp_peer_open(&peer_config, esp_peer_get_default_impl(), &peer_) != ESP_PEER_ERR_NONE) {
-        SetError("Could not start WebRTC on Apollo.");
+        SetError("Could not start WebRTC.");
         CloseAudioChannel(false);
         return false;
     }
@@ -298,7 +298,7 @@ bool CodexVoiceProtocol::OpenAudioChannel() {
             [](void* context) { static_cast<CodexVoiceProtocol*>(context)->RunPeerLoop(); },
             "codex_voice_peer", kPeerTaskStackSize, this, 5, nullptr) != pdPASS) {
         peer_running_ = false;
-        SetError("Could not start Apollo's WebRTC task.");
+        SetError("Could not start the WebRTC task.");
         CloseAudioChannel(false);
         return false;
     }
@@ -445,7 +445,7 @@ bool CodexVoiceProtocol::SendSignalOffer(const uint8_t* data, size_t size) {
     cJSON_free(json);
     cJSON_Delete(root);
     if (!sent) {
-        Fail("Could not send Apollo's WebRTC offer.");
+        Fail("Could not send the WebRTC offer.");
     }
     return sent;
 }
@@ -804,7 +804,7 @@ void CodexVoiceProtocol::RunPeerLoop() {
 }
 
 void CodexVoiceProtocol::CheckInboundAudioStall() {
-    // Apollo can keep transcribing and captioning a reply while the inbound
+    // The Mac can keep transcribing and captioning a reply while the inbound
     // audio track is wedged, so the user watches words appear in silence. The
     // data channel stays healthy, which means nothing else notices. If speech
     // was expected and no audio frame has arrived for several seconds, the

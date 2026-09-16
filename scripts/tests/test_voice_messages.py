@@ -151,7 +151,7 @@ int main() {
 }
 '''.replace("HANDLER", handler)
     cjson = root / "managed_components/espressif__cjson/cJSON"
-    with tempfile.TemporaryDirectory(prefix="apollo-message-test-") as directory:
+    with tempfile.TemporaryDirectory(prefix="voicemode-message-test-") as directory:
         path = Path(directory)
         (path / "test.cc").write_text(program)
         subprocess.run(["cc", "-c", str(cjson / "cJSON.c"), "-o", str(path / "json.o")], check=True)

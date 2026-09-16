@@ -8,8 +8,8 @@ import monitor
 
 def main():
     with TemporaryDirectory() as temporary_directory:
-        monitor.LOG = Path(temporary_directory) / 'apollo.log'
-        monitor.ROTATED_LOG = Path(temporary_directory) / 'apollo.log.1'
+        monitor.LOG = Path(temporary_directory) / 'device.log'
+        monitor.ROTATED_LOG = Path(temporary_directory) / 'device.log.1'
         monitor.LOG.write_text(
             '\n'.join([
                 'I (1000) CodexVoice: received=3 audio_frames=0 bytes=3 rate=16000',

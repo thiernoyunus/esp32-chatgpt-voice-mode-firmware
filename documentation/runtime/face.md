@@ -2,7 +2,7 @@
 
 The round panel is an **LVGL** display driven by `main/display/lcd_display.*`. Idle chrome is `WatchUi` (home plus settings). During a call, `LcdDisplay::RenderVoiceOrb` draws the **bloub** character from `main/display/bloub/` into a canvas — shape and colour come from watch settings, with connecting orbit rings and a working-state cycle while the agent is busy.
 
-There is no emote engine and no `emote_display` in this tree. Classic emotion mapping (`MapApolloEmotion`) went away with `apollo_protocol.*`.
+There is no emote engine and no `emote_display` in this tree. The earlier emotion mapping went away with the dialect that used it.
 
 ## Call chrome
 

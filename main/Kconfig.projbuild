@@ -1,74 +1,74 @@
 menu "Xiaozhi Assistant"
 
-config APOLLO_PROTOCOL
-    bool "Use the Apollo desk agent protocol"
+config VOICEMODE_PROTOCOL
+    bool "Use the voice mode protocol"
     default n
     help
-        Talk to an Apollo backend (a Cloudflare Worker running the agents SDK)
-        instead of a xiaozhi server. The connection url, auth token and device
-        id are read from the NVS namespace "apollo" rather than from an OTA
-        config response, so no OTA endpoint is required.
+        Talk to a listener on one Mac on the same wifi instead of a xiaozhi
+        server. The connection url, auth token and device id are read from the
+        NVS namespace "voicemode" rather than from an OTA config response, so
+        no OTA endpoint is required.
 
-        Apollo carries raw PCM in both directions, so this also selects the
-        PCM uplink below.
+        Raw PCM travels in both directions, so this also selects the PCM
+        uplink below.
 
-config APOLLO_URL
-    string "Apollo base url"
-    depends on APOLLO_PROTOCOL
+config VOICEMODE_URL
+    string "Voice mode base url"
+    depends on VOICEMODE_PROTOCOL
     default ""
     help
-        Base websocket url of the Apollo worker, without a path, for example
-        wss://apollo.example.workers.dev. Used only when the NVS namespace
-        "apollo" has no "url" key, so a provisioned device overrides this.
+        Base websocket url of the Mac running the listener, without a path,
+        for example ws://192.168.1.20:8790. Used only when the NVS namespace
+        "voicemode" has no "url" key, so a provisioned device overrides this.
 
-config APOLLO_TOKEN
-    string "Apollo device shared secret"
-    depends on APOLLO_PROTOCOL
+config VOICEMODE_TOKEN
+    string "Device shared secret"
+    depends on VOICEMODE_PROTOCOL
     default ""
     help
-        Value of DEVICE_SHARED_SECRET on the worker. Same NVS override rule as
-        APOLLO_URL.
+        Value of DEVICE_SHARED_SECRET on the Mac. Same NVS override rule as
+        VOICEMODE_URL.
 
         Do not commit a real secret to sdkconfig.defaults: set it in the local
         (gitignored) sdkconfig instead, or provision NVS.
 
-config APOLLO_DEVICE_ID
-    string "Apollo device id"
-    depends on APOLLO_PROTOCOL
+config VOICEMODE_DEVICE_ID
+    string "Device id"
+    depends on VOICEMODE_PROTOCOL
     default "desk"
     help
-        Agent instance name, which is also the conversation the device joins.
+        Name this device connects as, which is also the conversation it joins.
         Falls back to the MAC address when left empty.
 
-config APOLLO_CODEX_VOICE
+config VOICEMODE_CODEX_VOICE
     bool
-    depends on APOLLO_PROTOCOL && IDF_TARGET_ESP32S3
+    depends on VOICEMODE_PROTOCOL && IDF_TARGET_ESP32S3
     default y
     help
-        Replaces Apollo's Soniox audio path with a direct WebRTC voice call
-        created through the logged-in Codex bridge, with the Codex orb display.
-        This workspace builds only Codex Voice. Classic lives in its backup.
+        A direct WebRTC voice call created through the logged-in Codex on the
+        Mac, with the Codex orb display. This is the only path this tree
+        builds; the earlier audio path is gone.
 
-config APOLLO_NTP_SERVER
+config VOICEMODE_NTP_SERVER
     string "NTP server"
-    depends on APOLLO_PROTOCOL
+    depends on VOICEMODE_PROTOCOL
     default "pool.ntp.org"
     help
         Skipping the xiaozhi activation also skips the only place the clock was
         ever set, so the device syncs its own time instead.
 
-config APOLLO_TIMEZONE
+config VOICEMODE_TIMEZONE
     string "POSIX timezone"
-    depends on APOLLO_PROTOCOL
+    depends on VOICEMODE_PROTOCOL
     default "<-03>3"
     help
         POSIX TZ string used for the on-screen clock. The default is Argentina
         (UTC-3, no DST). Note the sign convention is inverted: UTC-3 is "3".
 
-config APOLLO_RAW_PCM_UPLINK
+config VOICEMODE_RAW_PCM_UPLINK
     bool "Send microphone audio as raw PCM instead of Opus"
-    depends on !APOLLO_CODEX_VOICE
-    default y if APOLLO_PROTOCOL
+    depends on !VOICEMODE_CODEX_VOICE
+    default y if VOICEMODE_PROTOCOL
     default n
     help
         Skips the Opus encoder and pushes 16 kHz mono PCM frames straight to
@@ -119,7 +119,7 @@ choice BOARD_TYPE
     prompt "Target Board"
     default BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85C
     help
-        Apollo runs on exactly one board in this fork.
+        This fork runs on exactly one board.
 
     config BOARD_TYPE_WAVESHARE_ESP32_S3_TOUCH_LCD_1_85C
         bool "Waveshare ESP32-S3-Touch-LCD-1.85C"

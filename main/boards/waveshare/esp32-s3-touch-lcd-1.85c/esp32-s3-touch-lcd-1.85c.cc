@@ -17,7 +17,7 @@
 #include <esp_lcd_st77916.h>
 #include <esp_timer.h>
 #include "esp_io_expander_tca9554.h"
-#ifdef CONFIG_APOLLO_PROTOCOL
+#ifdef CONFIG_VOICEMODE_PROTOCOL
 #include <esp_lcd_touch_cst816s.h>
 #include <freertos/FreeRTOS.h>
 #include <freertos/task.h>
@@ -361,7 +361,7 @@ private:
                                     DISPLAY_WIDTH, DISPLAY_HEIGHT, DISPLAY_OFFSET_X, DISPLAY_OFFSET_Y, DISPLAY_MIRROR_X, DISPLAY_MIRROR_Y, DISPLAY_SWAP_XY);
     }
 
-#ifdef CONFIG_APOLLO_PROTOCOL
+#ifdef CONFIG_VOICEMODE_PROTOCOL
     static constexpr uint32_t kTouchPollMs = 20;
     static constexpr int kMaxTouchReadFailures = 25;
 
@@ -535,7 +535,7 @@ public:
         InitializeSpi();
         Initializest77916Display();
         InitializeButtons();
-#ifdef CONFIG_APOLLO_PROTOCOL
+#ifdef CONFIG_VOICEMODE_PROTOCOL
         InitializeTouch();
 #endif
         GetBacklight()->RestoreBrightness();

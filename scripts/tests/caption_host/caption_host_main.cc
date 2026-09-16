@@ -18,7 +18,7 @@ static int g_shot = 0;
 
 static void snap(const char* tag) {
     char path[256];
-    snprintf(path, sizeof(path), "/tmp/apollo-caption-%02d-%s.png", g_shot++, tag);
+    snprintf(path, sizeof(path), "/tmp/voicemode-caption-%02d-%s.png", g_shot++, tag);
     /* LVGL only redraws on a tick, so a snapshot taken without one catches the
      * frame before everything on this screen was added. */
     for (int i = 0; i < 3; i++) { lv_tick_inc(20); lv_timer_handler(); }

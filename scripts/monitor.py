@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Serve a local Apollo voice and screen monitor."""
+"""Serve a local voice and screen monitor for the device."""
 
 import base64
 import http.server
@@ -12,15 +12,15 @@ import urllib.request
 from pathlib import Path
 
 
-DEFAULT_STATE_DIRECTORY = Path.home() / '.apollo'
+DEFAULT_STATE_DIRECTORY = Path.home() / '.voicemode'
 LOG = Path(
     os.environ.get(
-        'APOLLO_MONITOR_LOG',
-        str(DEFAULT_STATE_DIRECTORY / 'apollo_live.log'),
+        'VOICEMODE_MONITOR_LOG',
+        str(DEFAULT_STATE_DIRECTORY / 'voicemode_live.log'),
     )
 ).expanduser()
 ROTATED_LOG = LOG.with_name(LOG.name + '.1')
-PORT = int(os.environ.get('APOLLO_MONITOR_PORT', '8787'))
+PORT = int(os.environ.get('VOICEMODE_MONITOR_PORT', '8787'))
 MIN_VOICE_AUDIO_BYTES = 4
 MAX_READ_BYTES = 2_000_000
 TIMESTAMP_ROLLBACK_TOLERANCE_MS = 100
@@ -41,7 +41,7 @@ def screen_endpoint():
 
 
 def capture_screen():
-    """Ask Apollo's existing MCP screen tool for one JPEG frame."""
+    """Ask the Mac listener's screen tool for one JPEG frame."""
     global SCREEN_REQUEST_ID
     with SCREEN_LOCK:
         request_id = SCREEN_REQUEST_ID
@@ -68,13 +68,13 @@ def capture_screen():
         with urllib.request.urlopen(request, timeout=12) as response:
             payload = json.loads(response.read())
     except (OSError, json.JSONDecodeError) as error:
-        raise RuntimeError('Apollo screen is unavailable') from error
+        raise RuntimeError('The device screen is unavailable') from error
     if 'error' in payload:
-        raise RuntimeError('Apollo screen request failed')
+        raise RuntimeError('The device screen request failed')
     for item in payload.get('result', {}).get('content', []):
         if item.get('type') == 'image' and item.get('data'):
             return base64.b64decode(item['data'])
-    raise RuntimeError('Apollo returned no screen frame')
+    raise RuntimeError('The device returned no screen frame')
 
 
 def number(pattern, line):
@@ -218,7 +218,7 @@ def build():
         })
 
     conversation = sorted(
-        [{'who': 'apollo', **turn} for turn in turns]
+        [{'who': 'device', **turn} for turn in turns]
         + [{'who': 'you', **line} for line in heard],
         key=lambda item: item['t'],
     )
@@ -240,7 +240,7 @@ def build():
     }
 
 
-PAGE = """<!doctype html><meta charset=utf-8><title>Apollo voice monitor</title>
+PAGE = """<!doctype html><meta charset=utf-8><title>Voice monitor</title>
 <style>
  body{background:#0d0d0f;color:#e8e8ea;font:15px/1.5 -apple-system,system-ui,sans-serif;margin:0;padding:24px}
  h1{font-size:17px;font-weight:600;margin:0 0 4px}
@@ -258,8 +258,8 @@ PAGE = """<!doctype html><meta charset=utf-8><title>Apollo voice monitor</title>
  .txt{flex:1}.meta{color:#6e6e76;font-size:12px;margin-top:3px}
  .warn{background:#2a1f0d;border-color:#4a3410;color:#fbbf24;padding:10px 14px;border-radius:9px;margin-bottom:14px;font-size:13px}
 </style>
-<h1>Apollo voice monitor</h1>
-<div class=sub>Live from the device. Updates every 2s. Green = real voice-audio frames reached Apollo's playback path; this cannot prove the speaker is audible. Blue = your words reached Apollo intact.</div>
+<h1>Voice monitor</h1>
+<div class=sub>Live from the device. Updates every 2s. Green = real voice-audio frames reached the device's playback path; this cannot prove the speaker is audible. Blue = your words reached the Mac intact.</div>
 <div id=app>Waiting for the device…</div>
 <script>
 async function tick(){
@@ -267,7 +267,7 @@ async function tick(){
   const d = await (await fetch('/data')).json();
   const s = d.stats;
   let h = '';
-  if(!s.total) h += '<div class=warn>No replies captured yet. Is Apollo plugged in over USB?</div>';
+  if(!s.total) h += '<div class=warn>No replies captured yet. Is the device plugged in over USB?</div>';
   if(d.recovered.length) h += '<div class=warn>Audio stall auto-recovered '+d.recovered.length+'x — the watchdog restarted the call.</div>';
   h += '<div class=cards>'
     +'<div class=card><div class="n '+(s.silent?'bad':'ok')+'">'+(s.total-s.silent)+'/'+s.total+'</div><div class=k>replies with audio frames</div></div>'
@@ -281,10 +281,10 @@ async function tick(){
     const tag  = mine ? (t.clean ? 'HEARD' : 'CUT') : (t.spoken ? 'AUDIO RX' : 'NO AUDIO');
     const cls  = mine ? (t.clean ? 'tyou' : 'tcut') : (t.spoken ? 'tok' : 'tbad');
     const meta = mine
-      ? (t.clean ? 'reached Apollo intact' : t.drops + ' dropped fragment(s) — Apollo may have misheard')
+      ? (t.clean ? 'reached the device intact' : t.drops + ' dropped fragment(s) — the device may have misheard')
       : t.audio_frames + ' audio frame(s) · playback peak ' + t.peak;
     h += '<div class="row'+(mine?' you':'')+'"><span class="tag '+cls+'">'+tag+'</span>'
-      +'<div class=txt><div class=who>'+(mine?'YOU':'APOLLO')+'</div>'+esc(t.text)
+      +'<div class=txt><div class=who>'+(mine?'YOU':'DEVICE')+'</div>'+esc(t.text)
       +'<div class=meta>'+meta+'</div></div></div>';
   }
   document.getElementById('app').innerHTML = h;

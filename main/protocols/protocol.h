@@ -12,7 +12,7 @@ struct AudioStreamPacket {
     int frame_duration = 0;
     uint32_t timestamp = 0;
     std::vector<uint8_t> payload;
-    // Apollo streams TTS as headerless PCM, but local sound effects are still
+    // Replies arrive as headerless PCM, but local sound effects are still
     // Opus packets from the ogg demuxer. The decode queue carries both, so the
     // payload kind has to travel with the packet, not with a build flag.
     bool pcm = false;
@@ -78,11 +78,11 @@ public:
     virtual void SendStopListening();
     virtual void SendAbortSpeaking(AbortReason reason);
     virtual void SendMcpMessage(const std::string& message);
-    // Only Apollo Classic had a telemetry message; Codex Voice ignores this.
+    // Only the earlier dialect had a telemetry message; Codex Voice ignores this.
     virtual void SendTelemetry(const DeviceTelemetry& telemetry) { (void)telemetry; }
 
     virtual void SendPlaybackAck(uint32_t played_milliseconds) { (void)played_milliseconds; }
-    // And only Apollo asks for confirmations.
+    // And only that dialect asked for confirmations.
     virtual void SendConfirm(bool ok) { (void)ok; }
     // Cancels an open listen session without committing the audio as a turn.
     virtual void SendListenCancel() {}

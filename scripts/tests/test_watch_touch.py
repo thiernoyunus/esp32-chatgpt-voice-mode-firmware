@@ -12,7 +12,7 @@ assert 'app.OnWatchAction(WatchUi::Action::EndCall' in board[failure_start:failu
 start = board.index('            // Feed the toolkit once per sample;')
 # End at the last statement of the per-sample touch dispatch (before the
 # surrounding while-loop's closing brace). The old '#endif' terminator was
-# removed with the CONFIG_APOLLO_CODEX_VOICE wrapper.
+# removed with the CONFIG_VOICEMODE_CODEX_VOICE wrapper.
 end = '            vTaskDelay(pdMS_TO_TICKS(kTouchPollMs));'
 block = board[start:board.index(end, start) + len(end)]
 program = r'''

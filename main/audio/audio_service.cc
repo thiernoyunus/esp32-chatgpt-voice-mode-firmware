@@ -125,7 +125,7 @@ void AudioService::Initialize(AudioCodec* codec) {
 #endif
     audio_engine_->OnOutput([this](std::vector<int16_t>&& data) {
         /* Barge-in measurement: compare what the microphone delivers while the
-         * speaker is idle against what it delivers while Apollo is talking. If
+         * speaker is idle against what it delivers while the assistant is talking. If
          * echo cancellation is scrubbing the user's interruption, raw_peak
          * collapses in the speaking case even when the user is shouting.
          * Measured before kCodexVoiceInputGain so the figure stays usable for
@@ -506,7 +506,7 @@ void AudioService::OpusCodecTask() {
             SetDecodeSampleRate(packet->sample_rate, packet->frame_duration);
             bool decoded = false;
             if (packet->pcm) {
-                /* Apollo streams the reply as raw little-endian PCM chunks, so there
+                /* The assistant streams the reply as raw little-endian PCM chunks, so there
                  * is nothing to decode: the payload is already what the speaker
                  * wants. Local sound effects still arrive as Opus and take the
                  * decoder branch below. */
@@ -593,8 +593,8 @@ void AudioService::OpusCodecTask() {
             packet->timestamp = task->timestamp;
 
             bool payload_ready = false;
-#ifdef CONFIG_APOLLO_RAW_PCM_UPLINK
-            /* Apollo consumes headerless little-endian PCM, so the Opus encoder is
+#ifdef CONFIG_VOICEMODE_RAW_PCM_UPLINK
+            /* The Mac consumes headerless little-endian PCM, so the Opus encoder is
              * bypassed and the captured frame ships exactly as it was captured. */
             {
                 auto pcm_bytes = (const uint8_t *)task->pcm.data();

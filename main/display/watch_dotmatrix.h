@@ -2,7 +2,7 @@
 
 /* Dot-matrix text, the app-pixels signature.
  *
- * Ported from the mockup at tools/lvgl-mcp/apollo-screens/v2/dotmatrix.h, where
+ * Ported from the mockup at tools/lvgl-mcp/screens/v2/dotmatrix.h, where
  * the look was designed: a lit dot per pixel of a 5x7 cell, with the unlit dots
  * left faintly visible so the text reads as a physical matrix rather than as a
  * font. The ghost grid is the whole trick; without it this is just a pixel font.

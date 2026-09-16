@@ -165,7 +165,7 @@ bool AfeAudioEngine::Initialize(AudioCodec* codec, int frame_duration_ms, srmode
     afe_config->aec_mode = AEC_MODE_VOIP_HIGH_PERF;
     // ponytail: AGGR is the library default; VERYAGGR muted the mic whenever the
     // speaker was live, which is exactly what makes barge-in impossible. Drop to
-    // NORMAL only if Apollo still cannot be talked over; NORMAL risks Apollo
+    // NORMAL only if the assistant still cannot be talked over; NORMAL risks it
     // hearing its own voice and interrupting itself.
     afe_config->aec_nlp_level = AEC_NLP_LEVEL_AGGR;
     afe_config->ns_init = false;

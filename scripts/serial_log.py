@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture Apollo's USB serial output for the local monitor."""
+"""Capture the device's USB serial output for the local monitor."""
 
 import os
 import stat
@@ -10,13 +10,13 @@ from pathlib import Path
 import serial
 
 
-DEVICE = os.environ.get('APOLLO_SERIAL_DEVICE', '/dev/cu.usbmodem1101')
-DEFAULT_STATE_DIRECTORY = Path.home() / '.apollo'
+DEVICE = os.environ.get('VOICEMODE_SERIAL_DEVICE', '/dev/cu.usbmodem1101')
+DEFAULT_STATE_DIRECTORY = Path.home() / '.voicemode'
 STATE_DIRECTORY = Path(
-    os.environ.get('APOLLO_MONITOR_STATE_DIR', str(DEFAULT_STATE_DIRECTORY))
+    os.environ.get('VOICEMODE_MONITOR_STATE_DIR', str(DEFAULT_STATE_DIRECTORY))
 ).expanduser()
 LOG = Path(
-    os.environ.get('APOLLO_MONITOR_LOG', str(STATE_DIRECTORY / 'apollo_live.log'))
+    os.environ.get('VOICEMODE_MONITOR_LOG', str(STATE_DIRECTORY / 'voicemode_live.log'))
 ).expanduser()
 ROTATED_LOG = LOG.with_name(LOG.name + '.1')
 MAX_LOG_BYTES = 2_000_000

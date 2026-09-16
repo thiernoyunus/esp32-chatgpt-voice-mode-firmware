@@ -35,7 +35,7 @@ static void check(bool cond, const char* label) {
 
 static void snap(const char* tag) {
     char path[256];
-    snprintf(path, sizeof(path), "/tmp/apollo-watch-%02d-%s.png", g_shot++, tag);
+    snprintf(path, sizeof(path), "/tmp/watch-%02d-%s.png", g_shot++, tag);
     uint8_t* fb = headless_display_get_framebuffer();
     uint32_t w = headless_display_get_width(), h = headless_display_get_height();
     screenshot_save_png(path, fb, w, h);
@@ -116,7 +116,7 @@ static lv_obj_t* make_voice_placeholder(lv_obj_t* parent) {
 }
 
 int main() {
-    printf("=== Apollo Watch UI Host Test ===\n");
+    printf("=== Watch UI Host Test ===\n");
     lv_init();
     headless_display_init(360, 360);
     lv_tick_inc(100);

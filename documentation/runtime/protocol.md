@@ -1,10 +1,10 @@
 # Protocol
 
-The device speaks Codex Voice through `main/protocols/codex_voice_protocol.*`: a long-lived **control WebSocket** plus a **per-call WebRTC** session. The Classic Apollo JSON-over-websocket dialect (`apollo_protocol.*`) is gone from this tree.
+The device speaks Codex Voice through `main/protocols/codex_voice_protocol.*`: a long-lived **control WebSocket** plus a **per-call WebRTC** session. The earlier JSON-over-websocket dialect is gone from this tree.
 
 ## Connection
 
-`Start()` opens the control socket to `<base>/agents/apollo/<device_id>?token=<token>`, sends `hello`, and leaves MCP available while idle. A voice call starts later: `OpenAudioChannel()` creates an `esp_peer` WebRTC session (Opus 16 kHz mono, send and receive), waits for the reliable data channel `oai-events`, then fires the opened callbacks.
+`Start()` opens the control socket to `<base>/agents/voicemode/<device_id>?token=<token>`, sends `hello`, and leaves MCP available while idle. A voice call starts later: `OpenAudioChannel()` creates an `esp_peer` WebRTC session (Opus 16 kHz mono, send and receive), waits for the reliable data channel `oai-events`, then fires the opened callbacks.
 
 Signaling stays on the control WebSocket. The local SDP goes out as `realtime_offer` (optional `model` / `threadId` / `temporary` / `voice`); the bridge answers with `realtime_answer` (SDP plus the model and chat lists the watch UI can show).
 

@@ -8,13 +8,13 @@ A device needs three values to find its server: URL, token, and device id.
 
 | Config | Meaning |
 |--------|---------|
-| `CONFIG_APOLLO_URL` | Websocket base, e.g. `wss://<worker>.workers.dev` |
-| `CONFIG_APOLLO_TOKEN` | Shared secret, checked by the server |
-| `CONFIG_APOLLO_DEVICE_ID` | Instance name; falls back to the MAC when empty |
+| `CONFIG_VOICEMODE_URL` | Websocket base, e.g. `wss://<worker>.workers.dev` |
+| `CONFIG_VOICEMODE_TOKEN` | Shared secret, checked by the server |
+| `CONFIG_VOICEMODE_DEVICE_ID` | Instance name; falls back to the MAC when empty |
 
 ## Per-device override
 
-NVS namespace `apollo` (keys `url`, `token`, `device_id`) wins over the build-time values, so a provisioned device can be repointed without a rebuild. Full NVS provisioning rewrites the partition — taking the WiFi credentials with it — which is why the build-time defaults are the friendlier path.
+NVS namespace `voicemode` (keys `url`, `token`, `device_id`) wins over the build-time values, so a provisioned device can be repointed without a rebuild. Full NVS provisioning rewrites the partition — taking the WiFi credentials with it — which is why the build-time defaults are the friendlier path.
 
 ## WiFi
 

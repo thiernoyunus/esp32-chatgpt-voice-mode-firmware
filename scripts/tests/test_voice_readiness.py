@@ -75,8 +75,8 @@ int main() {
 
     /* The part a person reads. Every missing link has to name itself, because
      * "nothing came through" is true of each of them. */
-    assert(StallMessage(kVoiceStagePeerConnected, true).find("never received") != std::string::npos);
-    assert(StallMessage(kVoiceStageAudioTrack, true).find("never received") != std::string::npos);
+    assert(StallMessage(kVoiceStagePeerConnected, true).find("audio never arrived") != std::string::npos);
+    assert(StallMessage(kVoiceStageAudioTrack, true).find("audio never arrived") != std::string::npos);
     assert(StallMessage(kVoiceStageEventChannel, true).find("channel never opened") != std::string::npos);
     assert(StallMessage(kVoiceStageSessionStarted, true).find("session never started") != std::string::npos);
     assert(StallMessage(kVoiceStagePlaybackAdmitted, true).find("speaker") != std::string::npos);

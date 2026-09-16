@@ -7,7 +7,7 @@ It is no longer a tracking fork. The divergence is deliberate and one-way:
 ## Removed from upstream
 
 - **All boards** except `boards/common/` and the Waveshare ESP32-S3-Touch-LCD-1.85C (~100 board implementations).
-- **Upstream protocols** (`mqtt_protocol`, `websocket_protocol`) and this fork's later Classic Apollo websocket dialect. The live path is Codex Voice (`codex_voice_protocol.*`).
+- **Upstream protocols** (`mqtt_protocol`, `websocket_protocol`) and this fork's later JSON-over-websocket dialect. The live path is Codex Voice (`codex_voice_protocol.*`).
 - **All languages** except es-ES (device language) and en-US (fallback base).
 - Non-S3 chip configs, cellular modem support (ML307/NT26, dual-network, ethernet), upstream docs, docker packaging, and the zh/ja READMEs.
 - Camera/video, USB-network, BluFi, unused LED drivers, unused audio codecs, and the emote/OLED display stacks.

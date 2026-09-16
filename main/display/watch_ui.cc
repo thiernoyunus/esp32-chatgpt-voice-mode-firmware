@@ -309,7 +309,7 @@ void WatchUi::Show(Page page) {
         // Shorter lines than the old paragraph: the dot-matrix letters are
         // wide, and the chord at this height will not hold a full sentence.
         dm_style_t body={2,1,1,0x8E8E93u,0x101010u};
-        const char* lines[]={"THIS ENDS THE CALL","JOIN THE APOLLO","HOTSPOT, THEN OPEN"};
+        const char* lines[]={"THIS ENDS THE CALL","JOIN THE DEVICE","HOTSPOT, THEN OPEN"};
         for(int i=0;i<3;++i) dm_text_center(shell_,kCenter,122+i*22,lines[i],&body);
         dm_style_t addr={3,2,1,0xFFFFFFu,0x101010u};
         dm_text_center(shell_,kCenter,196,"192.168.4.1",&addr);

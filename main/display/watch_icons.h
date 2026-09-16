@@ -1,6 +1,6 @@
 #pragma once
 
-// Watch face icon assets for Apollo round ESP32/LVGL UI
+// Watch face icon assets for the round ESP32/LVGL UI
 // Control icons are A8 (alpha-only) and tinted white where they are drawn.
 // The Codex mark is the one full-colour asset - see below.
 // Control icons:24x24

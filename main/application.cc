@@ -17,7 +17,7 @@
 
 #include <driver/gpio.h>
 #include <esp_log.h>
-#ifdef CONFIG_APOLLO_PROTOCOL
+#ifdef CONFIG_VOICEMODE_PROTOCOL
 #include <esp_app_desc.h>
 #include <esp_netif_sntp.h>
 #include <wifi_manager.h>
@@ -29,7 +29,7 @@
 
 #define TAG "Application"
 
-#ifdef CONFIG_APOLLO_PROTOCOL
+#ifdef CONFIG_VOICEMODE_PROTOCOL
 // The backlight is the single biggest draw on this board, so it goes first.
 static constexpr int kScreenSleepAfterSeconds = 60;
 // Slow enough that a server that keeps hanging up does not turn into a
@@ -335,7 +335,7 @@ void Application::Run() {
             display->UpdateStatusBar();
             if (clock_ticks_ % 3 == 0) RefreshWatchInfo();
 
-#ifdef CONFIG_APOLLO_PROTOCOL
+#ifdef CONFIG_VOICEMODE_PROTOCOL
             if (GetDeviceState() == kDeviceStateIdle) {
                 idle_seconds_++;
                 if (screen_sleep_seconds_ > 0 && idle_seconds_ >= screen_sleep_seconds_) {
@@ -366,7 +366,7 @@ void Application::Run() {
 }
 
 void Application::MaybeSendTelemetry() {
-#ifdef CONFIG_APOLLO_PROTOCOL
+#ifdef CONFIG_VOICEMODE_PROTOCOL
     if (protocol_ == nullptr || !protocol_->IsAudioChannelOpened()) {
         telemetry_sent_since_open_ = false;
         return;
@@ -458,9 +458,9 @@ void Application::HandleActivationDoneEvent() {
     SetDeviceState(kDeviceStateIdle);
 
     std::string version = esp_app_get_description()->version;
-#ifdef CONFIG_APOLLO_PROTOCOL
+#ifdef CONFIG_VOICEMODE_PROTOCOL
     // ota_ is still in use by the activation task's deferred firmware check;
-    // it also owns releasing it. Server time comes from SNTP under Apollo.
+    // it also owns releasing it. Server time comes from SNTP under voice mode.
 #else
     has_server_time_ = ota_->HasServerTime();
     version = ota_->GetCurrentVersion();
@@ -482,25 +482,25 @@ void Application::HandleActivationDoneEvent() {
 }
 
 void Application::ActivationTask() {
-    // Create OTA object for activation process. Still constructed under Apollo:
+    // Create OTA object for activation process. Still constructed under voice mode:
     // HandleActivationDoneEvent reads the version and server time off it.
     ota_ = std::make_unique<Ota>();
 
     // Mounts the assets partition as a side effect of first touching the
-    // Assets singleton, so it runs under Apollo too: skipping it left the
+    // Assets singleton, so it runs under voice mode too: skipping it left the
     // emote engine with no animations to play at all. The network path inside
     // only runs when a download url was explicitly stored.
     CheckAssetsVersion();
 
-#ifndef CONFIG_APOLLO_PROTOCOL
+#ifndef CONFIG_VOICEMODE_PROTOCOL
     // Check for new firmware version
     CheckNewVersion();
 #else
-    // Apollo is configured locally and has no activation service, so the
+    // Voice mode is configured locally and has no activation service, so the
     // xiaozhi handshake is skipped entirely: running it would block here
     // against api.tenclass.net waiting for a device registration that will
     // never happen.
-    ESP_LOGI(TAG, "Apollo protocol selected, skipping OTA activation");
+    ESP_LOGI(TAG, "Voice mode selected, skipping OTA activation");
     InitializeSystemTime();
 #endif
 
@@ -510,21 +510,21 @@ void Application::ActivationTask() {
     // Signal completion to main loop
     xEventGroupSetBits(event_group_, MAIN_EVENT_ACTIVATION_DONE);
 
-#ifdef CONFIG_APOLLO_PROTOCOL
+#ifdef CONFIG_VOICEMODE_PROTOCOL
     // After the ready signal on purpose: the check is a full HTTPS round trip
     // (~2.5 s) and the device is perfectly usable while it runs. ota_ is
     // released here, not in the handler, so the check can't race its owner.
-    CheckApolloFirmwareUpdate();
+    CheckFirmwareUpdate();
     ota_.reset();
 #endif
 }
 
-#ifdef CONFIG_APOLLO_PROTOCOL
-void Application::CheckApolloFirmwareUpdate() {
+#ifdef CONFIG_VOICEMODE_PROTOCOL
+void Application::CheckFirmwareUpdate() {
     // First and unconditionally: with CONFIG_BOOTLOADER_APP_ROLLBACK_ENABLE,
     // an image installed over the air boots as pending-verify and reverts on
     // the next reboot unless it is marked valid. The xiaozhi path that did
-    // this lives in CheckNewVersion, which is compiled out under Apollo.
+    // this lives in CheckNewVersion, which is compiled out under voice mode.
     ota_->MarkCurrentVersionValid();
     if (ota_->RolledBack()) {
         /* Said in the words someone who did not build this would use. The boot
@@ -534,17 +534,17 @@ void Application::CheckApolloFirmwareUpdate() {
         pending_watch_notification_ = "Update didn't finish. Running your last working version.";
     }
 
-    Settings settings("apollo", false);
+    Settings settings("voicemode", false);
     std::string base_url = settings.GetString("url");
     if (base_url.empty()) {
-        base_url = CONFIG_APOLLO_URL;
+        base_url = CONFIG_VOICEMODE_URL;
     }
     std::string token = settings.GetString("token");
     if (token.empty()) {
-        token = CONFIG_APOLLO_TOKEN;
+        token = CONFIG_VOICEMODE_TOKEN;
     }
     if (base_url.empty() || token.empty()) {
-        ESP_LOGW(TAG, "Apollo url or token not configured, skipping firmware check");
+        ESP_LOGW(TAG, "Voice mode url or token not configured, skipping firmware check");
         return;
     }
 
@@ -562,7 +562,7 @@ void Application::CheckApolloFirmwareUpdate() {
     // failed check must never hold the device in kDeviceStateActivating.
     esp_err_t error = ota_->CheckVersion();
     if (error != ESP_OK) {
-        ESP_LOGW(TAG, "Apollo firmware check failed (0x%x), continuing boot", error);
+        ESP_LOGW(TAG, "Firmware check failed (0x%x), continuing boot", error);
         return;
     }
     if (!ota_->HasNewVersion()) {
@@ -721,8 +721,8 @@ void Application::InitializeProtocol() {
 
     display->SetStatus(Lang::Strings::LOADING_PROTOCOL);
 
-    // Apollo is configured from NVS, not from an OTA config response. The
-    // upstream MQTT/websocket protocols are gone from this fork: Apollo's
+    // The connection is configured from NVS, not from an OTA config response. The
+    // upstream MQTT/websocket protocols are gone from this fork: the voice
     // dialect is the only one the device speaks.
     protocol_ = std::make_unique<CodexVoiceProtocol>();
 
@@ -1015,14 +1015,14 @@ void Application::HandleStartListeningEvent() {
     }
 }
 
-#ifdef CONFIG_APOLLO_PROTOCOL
+#ifdef CONFIG_VOICEMODE_PROTOCOL
 void Application::InitializeSystemTime() {
     // Fire and forget: the clock is only used for the on-screen display, so
     // nothing here should delay reaching the idle state.
-    setenv("TZ", CONFIG_APOLLO_TIMEZONE, 1);
+    setenv("TZ", CONFIG_VOICEMODE_TIMEZONE, 1);
     tzset();
 
-    esp_sntp_config_t sntp_config = ESP_NETIF_SNTP_DEFAULT_CONFIG(CONFIG_APOLLO_NTP_SERVER);
+    esp_sntp_config_t sntp_config = ESP_NETIF_SNTP_DEFAULT_CONFIG(CONFIG_VOICEMODE_NTP_SERVER);
     sntp_config.start = true;
     sntp_config.server_from_dhcp = false;
     auto err = esp_netif_sntp_init(&sntp_config);
@@ -1030,8 +1030,8 @@ void Application::InitializeSystemTime() {
         ESP_LOGW(TAG, "SNTP init failed: %s", esp_err_to_name(err));
         return;
     }
-    ESP_LOGI(TAG, "SNTP started against %s (TZ %s)", CONFIG_APOLLO_NTP_SERVER,
-             CONFIG_APOLLO_TIMEZONE);
+    ESP_LOGI(TAG, "SNTP started against %s (TZ %s)", CONFIG_VOICEMODE_NTP_SERVER,
+             CONFIG_VOICEMODE_TIMEZONE);
 }
 #endif
 
@@ -1304,7 +1304,7 @@ void Application::HandleStopListeningEvent() {
 }
 
 void Application::HandleWakeWordDetectedEvent() {
-#ifdef CONFIG_APOLLO_PROTOCOL
+#ifdef CONFIG_VOICEMODE_PROTOCOL
     // Saying the wake word to a dark device should light it up, whatever the
     // rest of this handler decides to do about the turn itself.
     NoteUserActivity();
@@ -1344,11 +1344,11 @@ void Application::HandleWakeWordDetectedEvent() {
 
 void Application::BeginWakeWordInvoke(const std::string& wake_word) {
     // Must run in the main task with the device in idle state
-#ifndef CONFIG_APOLLO_PROTOCOL
+#ifndef CONFIG_VOICEMODE_PROTOCOL
     audio_service_.EncodeWakeWord();
 #else
-    // Apollo starts a fresh raw-PCM stream after the wake event. Encoding the
-    // cached wake phrase as Opus only delays that event, and Apollo discards it.
+    // Voice mode starts a fresh raw-PCM stream after the wake event. Encoding the
+    // cached wake phrase as Opus only delays that event, and it is discarded.
 #endif
 
     // Always pass through the connecting state, even if the audio channel is
@@ -1394,7 +1394,7 @@ void Application::ContinueWakeWordInvoke(const std::string& wake_word) {
     }
 
     ESP_LOGI(TAG, "Wake word detected: %s", wake_word.c_str());
-#if CONFIG_SEND_WAKE_WORD_DATA && !defined(CONFIG_APOLLO_PROTOCOL)
+#if CONFIG_SEND_WAKE_WORD_DATA && !defined(CONFIG_VOICEMODE_PROTOCOL)
     // Encode and send the wake word data to the server
     while (auto packet = audio_service_.PopWakeWordPacket()) {
         protocol_->SendAudio(std::move(packet));
@@ -1507,7 +1507,7 @@ void Application::StartListeningAudio() {
     audio_service_.PlaySound(Lang::SoundVariants::ListenStart());
 
     // Each new listen session starts optimistic; the reply's turn_end says
-    // whether the mic reopens after Apollo speaks.
+    // whether the mic reopens after the assistant speaks.
     reopen_listening_after_speak_ = true;
     StartListenWatchdog();
     // After the queue clear above, never before: anything held for this call is

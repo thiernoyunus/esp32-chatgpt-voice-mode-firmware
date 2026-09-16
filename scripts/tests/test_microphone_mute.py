@@ -9,7 +9,7 @@ def main():
     main_path = Path(__file__).resolve().parents[2] / "main"
     source = (main_path / "audio/audio_service.cc").read_text()
     application = (main_path / "application.cc").read_text()
-    # OnVoiceTouchRelease used to sit inside #ifdef CONFIG_APOLLO_CODEX_VOICE;
+    # OnVoiceTouchRelease used to sit inside #ifdef CONFIG_VOICEMODE_CODEX_VOICE;
     # that wrapper is gone, so stop at the next Application method instead.
     touch_start = application.index("void Application::OnVoiceTouchRelease(")
     touch = application[touch_start:application.index("\nvoid Application::ShowConfirm(", touch_start)]
@@ -161,7 +161,7 @@ int main() {
     assert(!app.voice_model_picker_open_);
 }
 '''.replace("MUTE", mute).replace("GUARD", guard).replace("TOUCH", touch)
-    with tempfile.TemporaryDirectory(prefix="apollo-mute-test-") as directory:
+    with tempfile.TemporaryDirectory(prefix="voicemode-mute-test-") as directory:
         path = Path(directory)
         (path / "test.cc").write_text(program)
         subprocess.run(["c++", "-std=c++17", "-pthread", "-I", str(main_path), str(path / "test.cc"), "-o", str(path / "test")], check=True)

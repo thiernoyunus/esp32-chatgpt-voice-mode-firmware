@@ -1,8 +1,8 @@
 #!/bin/bash
-# Convert Apollo's UI sound effects from mp3 to the firmware's format:
+# Convert the UI sound effects from mp3 to the firmware's format:
 # Ogg/Opus, mono 16 kHz, 48 kbps, 60 ms frames, peak-normalized to -20 dBFS.
 #
-# Usage: ./scripts/convert_apollo_sounds.sh <mp3-dir>
+# Usage: ./scripts/convert_sounds.sh <mp3-dir>
 #
 # Converts every known effect found in <mp3-dir> (skips the missing ones) and
 # generates pitch-shifted _v2/_v3 variants (±6%, duration preserved) for the

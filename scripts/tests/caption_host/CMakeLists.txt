@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.16)
-project(apollo_caption_host C CXX)
+project(voicemode_caption_host C CXX)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -7,9 +7,9 @@ set(CMAKE_C_STANDARD 99)
 
 get_filename_component(FW_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../../.." ABSOLUTE)
 
-set(SIM_DIR "$ENV{APOLLO_LVGL_SIM_DIR}" CACHE PATH "LVGL simulator checkout")
+set(SIM_DIR "$ENV{VOICEMODE_LVGL_SIM_DIR}" CACHE PATH "LVGL simulator checkout")
 if(NOT SIM_DIR OR NOT EXISTS "${SIM_DIR}/lv_conf.h")
-    message(FATAL_ERROR "Set APOLLO_LVGL_SIM_DIR to an LVGL simulator checkout. Got: '${SIM_DIR}'")
+    message(FATAL_ERROR "Set VOICEMODE_LVGL_SIM_DIR to an LVGL simulator checkout. Got: '${SIM_DIR}'")
 endif()
 
 set(LV_BUILD_CONF_PATH "${SIM_DIR}/lv_conf.h" CACHE PATH "" FORCE)

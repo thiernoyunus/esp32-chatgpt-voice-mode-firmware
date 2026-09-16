@@ -6,7 +6,7 @@
         {
             "name": "esp32-s3-touch-lcd-1.85c",
             "sdkconfig_append": [
-                "CONFIG_APOLLO_CODEX_VOICE=y",
+                "CONFIG_VOICEMODE_CODEX_VOICE=y",
                 "CONFIG_USE_DEVICE_AEC=y",
                 "CONFIG_USE_DEFAULT_MESSAGE_STYLE=y",
                 "CONFIG_MMAP_FILE_NAME_LENGTH=32",

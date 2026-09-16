@@ -9,7 +9,7 @@ The frequent effects (`mode_switch`, `listen_start`, `listen_end`, `speech_done`
 ## Converting new sounds
 
 ```sh
-./scripts/convert_apollo_sounds.sh <mp3-dir>
+./scripts/convert_sounds.sh <mp3-dir>
 ```
 
 The script normalizes, encodes, and generates the variants for every known effect it finds in the directory.

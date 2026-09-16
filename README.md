@@ -47,9 +47,9 @@ idf.py -p /dev/cu.usbmodemXXXX flash
 Point the device at your Mac in the gitignored `sdkconfig.defaults.local`:
 
 ```
-CONFIG_APOLLO_URL="ws://<your-mac-lan-address>:8790"
-CONFIG_APOLLO_TOKEN="<the same secret the Mac has>"
-CONFIG_APOLLO_DEVICE_ID="desk"
+CONFIG_VOICEMODE_URL="ws://<your-mac-lan-address>:8790"
+CONFIG_VOICEMODE_TOKEN="<the same secret the Mac has>"
+CONFIG_VOICEMODE_DEVICE_ID="desk"
 ```
 
 That file is gitignored because it holds a secret. Never commit it.
@@ -65,7 +65,7 @@ python3 scripts/monitor.py
 
 Then open <http://localhost:8787/> for the conversation, the audio frames that
 actually reached playback, microphone drops, and screen snapshots. Logs land in
-`~/.apollo/apollo_live.log`. Three-byte WebRTC keepalives are excluded from the
+`~/.voicemode/voicemode_live.log`. Three-byte WebRTC keepalives are excluded from the
 audio count, so the number means what it says.
 
 ## Where this came from

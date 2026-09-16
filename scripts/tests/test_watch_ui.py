@@ -12,16 +12,16 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parents[2]
 HOST = ROOT / "scripts/tests/watch_ui_host"
 BUILD = Path(
-    os.environ.get("APOLLO_WATCH_UI_BUILD", "/tmp/apollo-watch-ui-host-owned/build")
+    os.environ.get("VOICEMODE_WATCH_UI_BUILD", "/tmp/voicemode-watch-ui-host-owned/build")
 )
 OUTPUT = Path("/tmp")
 # The LVGL simulator lives outside this repo, so both it and its round-boundary
 # checker have to be pointed at. Skip rather than fail: this harness is a local
 # rendering aid, not part of the build.
-SIM_DIR = Path(os.environ.get("APOLLO_LVGL_SIM_DIR", ""))
+SIM_DIR = Path(os.environ.get("VOICEMODE_LVGL_SIM_DIR", ""))
 CHECK_ROUND = SIM_DIR.parent / "check_round.py" if SIM_DIR.name else Path()
 if not SIM_DIR.is_dir() or not CHECK_ROUND.is_file():
-    print("SKIP: set APOLLO_LVGL_SIM_DIR to an LVGL simulator checkout "
+    print("SKIP: set VOICEMODE_LVGL_SIM_DIR to an LVGL simulator checkout "
           "(expects ../check_round.py beside it)")
     sys.exit(0)
 EXPECTED_TAGS = {
@@ -60,11 +60,11 @@ EXPECTED_TAGS = {
 subprocess.run(["cmake", "-S", str(HOST), "-B", str(BUILD)], cwd=ROOT, check=True)
 subprocess.run(["cmake", "--build", str(BUILD), "-j2"], cwd=ROOT, check=True)
 
-for path in OUTPUT.glob("apollo-watch-*.png"):
+for path in OUTPUT.glob("watch-*.png"):
     path.unlink()
 
 subprocess.run([str(BUILD / "watch_ui_test")], cwd=ROOT, check=True)
-shots = sorted(OUTPUT.glob("apollo-watch-*.png"))
+shots = sorted(OUTPUT.glob("watch-*.png"))
 tags = {path.stem.split("-", 3)[3] for path in shots}
 assert tags == EXPECTED_TAGS, f"unexpected screenshot set: {sorted(tags)}"
 
