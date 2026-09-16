@@ -21,38 +21,23 @@ LOG = Path(
 ).expanduser()
 ROTATED_LOG = LOG.with_name(LOG.name + '.1')
 PORT = int(os.environ.get('APOLLO_MONITOR_PORT', '8787'))
-MCP_DEVICE = os.environ.get('APOLLO_MONITOR_DEVICE', 'desk')
 MIN_VOICE_AUDIO_BYTES = 4
 MAX_READ_BYTES = 2_000_000
 TIMESTAMP_ROLLBACK_TOLERANCE_MS = 100
-DEFAULT_SERVER_DIR = Path(__file__).resolve().parents[2] / 'apollo-server'
-APOLLO_SERVER_DIR = Path(os.environ.get('APOLLO_SERVER_DIR', DEFAULT_SERVER_DIR))
 STRIP = re.compile(r'\x1b\[[0-9;]*m')
 TS = re.compile(r'\((\d{4,})\)')
 SCREEN_LOCK = threading.Lock()
 SCREEN_REQUEST_ID = 1
 
 
-def read_dev_var(name):
-    try:
-        for line in (APOLLO_SERVER_DIR / '.dev.vars').read_text().splitlines():
-            if line.startswith(name + '='):
-                return line.split('=', 1)[1].strip().strip('"')
-    except OSError:
-        pass
-    return ''
-
-
-def worker_url():
-    try:
-        url = json.loads((APOLLO_SERVER_DIR / '.apollo.json').read_text())['workerUrl']
-    except (OSError, KeyError, json.JSONDecodeError):
-        url = 'https://apollo.thiernoyunusdiallo.workers.dev'
-    return url.rstrip('/')
-
-
 def screen_endpoint():
-    return worker_url() + '/mcp?device=' + MCP_DEVICE
+    """The listener on this Mac, which holds the device connection.
+
+    This used to be a Cloudflare Worker reached over the internet. The device
+    no longer talks to one, so the screen now comes from the same local
+    process that carries the call. The endpoint is loopback-only by design.
+    """
+    return os.environ.get('ESP32_VOICE_MCP_URL', 'http://127.0.0.1:8790/mcp')
 
 
 def capture_screen():
@@ -66,7 +51,7 @@ def capture_screen():
         'id': request_id,
         'method': 'tools/call',
         'params': {
-            'name': 'apollo_screen_snapshot',
+            'name': 'capture_screen',
             'arguments': {'quality': 70},
         },
     }).encode()
@@ -75,9 +60,7 @@ def capture_screen():
         data=body,
         headers={
             'Accept': 'application/json, text/event-stream',
-            'Authorization': 'Bearer ' + read_dev_var('DASHBOARD_SHARED_SECRET'),
             'Content-Type': 'application/json',
-            'User-Agent': 'curl/8.7.1',
         },
         method='POST',
     )
