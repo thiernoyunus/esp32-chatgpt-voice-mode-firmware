@@ -1,0 +1,47 @@
+# PR check: the single board this fork supports must compile. Releases are
+# handled by publish.yml on pushes to main, so this only runs on PRs.
+# The upstream variant-selection machinery and its test suite validated
+# dozens of boards the hard fork removed; a fork with one board needs none
+# of it.
+name: Build Boards
+
+on:
+  pull_request:
+    branches:
+      - main
+    paths-ignore:
+      - '**.md'
+      - 'documentation/**'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build waveshare-esp32-s3-touch-lcd-1.85c
+    runs-on: ubuntu-latest
+    container:
+      image: espressif/idf:v6.0.2
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build
+        shell: bash
+        # build.py prints [ERROR] but exits 0 on failure, so the log is the
+        # real verdict.
+        run: |
+          source $IDF_PATH/export.sh
+          python scripts/build.py waveshare/esp32-s3-touch-lcd-1.85c 2>&1 | tee buildpy.log
+          if grep -q '\[ERROR\]' buildpy.log; then
+            echo 'build.py reported errors' >&2
+            exit 1
+          fi
+          test -f build/xiaozhi.bin
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: xiaozhi_${{ github.sha }}
+          path: build/xiaozhi.bin
+          if-no-files-found: error
