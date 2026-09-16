@@ -2,7 +2,7 @@
 
 ## Project
 
-Apollo's firmware — a hard fork of XiaoZhi (78/xiaozhi-esp32), reduced to exactly one purpose: the Waveshare ESP32-S3-Touch-LCD-1.85C V2 desk device talking to the Apollo server. All other boards, chips, protocols, and languages were removed on purpose; do not add generality back.
+A hard fork of XiaoZhi (78/xiaozhi-esp32), reduced to exactly one purpose: the Waveshare ESP32-S3-Touch-LCD-1.85C V2 desk device talking to a listener on one Mac on the same wifi. All other boards, chips, protocols, and languages were removed on purpose; do not add generality back.
 
 Use ESP-IDF v6.0.2.
 
@@ -22,7 +22,7 @@ LcdDisplay::RenderVoiceOrb and CodexVoiceProtocol.
 - `main/protocols/codex_voice_protocol.*`: the realtime WebRTC voice client this workspace builds.
 - `main/display/lcd_display.*` and `main/display/watch_ui.*`: the round watch UI and voice orb.
 - `main/display/bloub/`: the call-face character drawn into the orb canvas.
-- `main/mcp_server.*`: device-side MCP tools and dispatch (not yet wired to Apollo).
+- `main/mcp_server.*`: device-side MCP tools and dispatch. The Mac listener calls these; see its controls.ts.
 - `main/Kconfig.projbuild` / `main/CMakeLists.txt`: trimmed to the single board and es-ES/en-US.
 - `scripts/build.py`: canonical build entry point.
 
@@ -30,7 +30,7 @@ Read the closest existing implementation before adding a new one. Prefer the nar
 
 ## Required Rules
 
-- The firmware adapts to Apollo's protocol, never the reverse.
+- The firmware and the Mac listener share one wire contract and change together.
 - Preserve unrelated worktree changes and keep patches focused.
 - Core code depends on `Board` interfaces, never the concrete board class or its `config.h`.
 - Change runtime state through `Application::SetDeviceState()` and the state machine.
@@ -65,6 +65,6 @@ Never toggle DTR/RTS manually on the serial port (ROM download-mode trap); openi
 
 - Handbook: `documentation/index.md` (mirrors the server repo's structure)
 - Audio design: `main/audio/README.md`
-- Server contract and roadmap: the main repo (`galfrevn/apollo`), `documentation/` and `docs/roadmap.md`
+- Wire contract and Mac-side behaviour: `thiernoyunus/esp32-chatgpt-voice-mode`, and `documentation/` here
 
 Keep detailed or fast-changing information in those files, not here.

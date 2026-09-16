@@ -1,6 +1,6 @@
-# Apollo Firmware Handbook
+# Firmware handbook
 
-Apollo's firmware runs on a Waveshare ESP32-S3-Touch-LCD-1.85C (V2, round 360×360 touch display), forked from [78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32). It talks to the [Apollo server](https://github.com/galfrevn/apollo) over a control WebSocket plus per-call WebRTC (Codex Voice); the firmware adapts to Apollo's protocol, never the other way around.
+This firmware runs on a Waveshare ESP32-S3-Touch-LCD-1.85C (V2, round 360×360 touch display), forked from [78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32). It talks to a listener on one Mac on the same wifi over a control WebSocket plus per-call WebRTC (Codex Voice). That listener is [esp32-chatgpt-voice-mode](https://github.com/thiernoyunus/esp32-chatgpt-voice-mode); the two are halves of one wire contract and change together.
 
 This handbook is meant to be read in order. Later chapters assume the concepts introduced earlier. The server-side handbook lives in the main repo and covers everything above the wire.
 
@@ -29,4 +29,4 @@ This handbook is meant to be read in order. Later chapters assume the concepts i
 ### Part IV — Reference
 
 12. [Upstream](reference/upstream.md) — Relationship with xiaozhi-esp32
-13. [Barge-in](reference/barge-in.md) — Talking over Apollo: what has been tried, and why it failed
+13. [Barge-in](reference/barge-in.md) — Talking over the assistant: what has been tried, and why it failed

@@ -1,6 +1,6 @@
 # Barge-in — what has been tried
 
-Talking over Apollo while it is answering does not work. This is the record of
+Talking over the device while it is answering does not work. This is the record of
 what has been attempted, what each attempt measured, and why each one failed,
 so the same ground is not covered twice.
 
@@ -9,18 +9,18 @@ built, flashed to hardware, and measured.
 
 ## The shape of the problem
 
-Apollo's microphone stays open while it speaks, and the far end (Codex) decides
+The device's microphone stays open while it speaks, and the far end (Codex) decides
 when a reply has been interrupted, based on the audio we upload. The device
 already handles being told "the user started talking" correctly. So the
 plumbing is not the issue — what we upload is.
 
 Two things spoil it, and they are independent:
 
-1. **The echo canceller has nothing to work with.** It removes Apollo's voice
+1. **The echo canceller has nothing to work with.** It removes the device's voice
    from the microphone by subtracting a copy of what the speaker is playing.
    The board supplies that copy on a wired channel. It is correctly wired and
    correctly timed, and about a thousand times too quiet to subtract anything.
-2. **The microphone is overloaded.** Apollo's own speaker drives it past the
+2. **The microphone is overloaded.** the device's own speaker drives it past the
    converter's ceiling, and a signal that has hit the ceiling cannot be
    cancelled out of — the shape of what was said over it is already gone.
 
@@ -31,7 +31,7 @@ At the canceller's input, peak per second, with the speaker at volume 33:
 | condition | microphone | reference copy |
 |---|---|---|
 | user talking, speaker off | 5923 | **2** |
-| Apollo speaking | 13177 (peaks 32768) | **15** |
+| Device speaking | 13177 (peaks 32768) | **15** |
 
 The second row is the deficit: roughly 60 dB. The first row proves the wired
 channel is genuine and not crosstalk — it ignores the user completely and
@@ -121,7 +121,7 @@ real call.** This is where to resume.
 
 1. Redo attempt 5 + 6 together and test with a real call at the volume actually
    used. That combination has never been tried.
-2. Watch for Apollo interrupting *itself*: that means suppression is too low,
+2. Watch for the device interrupting *itself*: that means suppression is too low,
    not that the approach is wrong.
 3. Check speech still transcribes. Attempt 6 moves 24 dB from before the
    converter to after it, and that was never verified.

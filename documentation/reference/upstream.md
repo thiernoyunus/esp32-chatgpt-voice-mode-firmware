@@ -16,7 +16,7 @@ It is no longer a tracking fork. The divergence is deliberate and one-way:
 
 - The board/audio/display architecture and the `boards/common/` helpers the 1.85C actually uses.
 - The build tooling (`scripts/build.py`, asset generation) and managed components still required here (esp-sr, codecs, LVGL stack).
-- `LICENSE` (MIT) and attribution: if you need a general-purpose multi-board xiaozhi, use upstream — it is excellent. This fork trades all of that generality for one desk, one board, one server.
+- `LICENSE` (MIT) and attribution: if you need a general-purpose multi-board xiaozhi, use upstream — it is excellent. This fork trades all of that generality for one desk, one board, one Mac.
 
 ## Navigation
 
