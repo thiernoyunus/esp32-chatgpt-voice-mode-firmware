@@ -1,6 +1,6 @@
 # Provisioning
 
-A device needs three values to find its server: URL, token, and device id.
+A device needs three values to find the Mac it talks to: URL, token, and device id.
 
 ## Build-time defaults
 
@@ -8,8 +8,8 @@ A device needs three values to find its server: URL, token, and device id.
 
 | Config | Meaning |
 |--------|---------|
-| `CONFIG_VOICEMODE_URL` | Websocket base, e.g. `wss://<worker>.workers.dev` |
-| `CONFIG_VOICEMODE_TOKEN` | Shared secret, checked by the server |
+| `CONFIG_VOICEMODE_URL` | Websocket base, e.g. `ws://192.168.1.20:8790` |
+| `CONFIG_VOICEMODE_TOKEN` | Shared secret; must match `DEVICE_SHARED_SECRET` on the Mac |
 | `CONFIG_VOICEMODE_DEVICE_ID` | Instance name; falls back to the MAC when empty |
 
 ## Per-device override

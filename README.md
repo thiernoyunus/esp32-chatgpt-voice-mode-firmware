@@ -34,6 +34,12 @@ removed on purpose. If you want a general-purpose, many-board build, use
 [78/xiaozhi-esp32](https://github.com/78/xiaozhi-esp32) directly; it is
 excellent at being that, and this is not trying to be.
 
+## Setting it up from nothing
+
+Start here: **[SETUP.md](https://github.com/thiernoyunus/esp32-chatgpt-voice-mode/blob/main/SETUP.md)**
+in the Mac repository walks through both halves end to end, with a check after
+each step. The rest of this page assumes you have already done that.
+
 ## Build and flash
 
 See [documentation/operations/build.md](documentation/operations/build.md).
@@ -44,15 +50,11 @@ idf.py build
 idf.py -p /dev/cu.usbmodemXXXX flash
 ```
 
-Point the device at your Mac in the gitignored `sdkconfig.defaults.local`:
-
-```
-CONFIG_VOICEMODE_URL="ws://<your-mac-lan-address>:8790"
-CONFIG_VOICEMODE_TOKEN="<the same secret the Mac has>"
-CONFIG_VOICEMODE_DEVICE_ID="desk"
-```
-
-That file is gitignored because it holds a secret. Never commit it.
+The address, secret and device id live in the gitignored
+`sdkconfig.defaults.local` — see
+[documentation/operations/provisioning.md](documentation/operations/provisioning.md)
+for what goes in it and how a per-device override works. That file holds a
+secret, which is why it is gitignored: never commit it.
 
 ## Watching what it does
 
