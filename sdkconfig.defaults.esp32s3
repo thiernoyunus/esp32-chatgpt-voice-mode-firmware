@@ -39,6 +39,21 @@ CONFIG_USB_HOST_CONTROL_TRANSFER_MAX_SIZE=1536
 CONFIG_LV_USE_SNAPSHOT=y
 
 CONFIG_VOICEMODE_PROTOCOL=y
+# These two decide whether a call is a conversation or a single exchange, so
+# they belong here rather than in a file ESP-IDF does not read.
+#
+# USE_DEVICE_AEC switches the device to the full-duplex listening mode: the
+# microphone stays open while the assistant speaks, and the call runs until
+# the person ends it. Without it the device closes the microphone during a
+# reply and hangs up about a second after the person stops talking - correct
+# for the press-to-talk design this was forked from, wrong for a call.
+#
+# They used to live in sdkconfig.defaults.codex-voice. Nothing loads that name
+# automatically, so they survived only in each developer's own generated
+# sdkconfig. Delete that file and the next build silently produced a device in
+# the wrong mode, with no error to explain it. That cost one evening.
+CONFIG_VOICEMODE_CODEX_VOICE=y
+CONFIG_USE_DEVICE_AEC=y
 CONFIG_IDF_EXPERIMENTAL_FEATURES=y
 CONFIG_MBEDTLS_SSL_PROTO_DTLS=y
 CONFIG_MBEDTLS_SSL_DTLS_SRTP=y
